@@ -115,7 +115,7 @@ pip install pyqt5 pymongo pyttsx3 wikipedia diffusers transformers torch
 
 ### 3. Setup MongoDB
 
-Make sure MongoDB is running locally:
+Make sure MongoDB is running locally(you can use atlas too if u want):
 
 ```
 mongodb://localhost:27017
@@ -123,7 +123,7 @@ mongodb://localhost:27017
 
 ARIA will automatically create the required collections.
 
-### 4. Setup Local LLM
+### 4. Setup Local LLM / u can use ollama too or even add api keys for your prefered models but have to change the code just little bit
 
 Run a local model using **LM Studio** and ensure the API endpoint is accessible.
 
@@ -169,22 +169,6 @@ a cyberpunk city at night with neon lights
 ```
 
 Generated images are saved automatically.
-
----
-
-## Macros
-
-You can create reusable command workflows.
-
-Example:
-
-```
-create macro cleanup
-→ search pdf
-→ open explorer
-```
-
-Macros can be executed later using natural language.
 
 ---
 
