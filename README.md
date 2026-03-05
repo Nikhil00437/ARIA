@@ -124,7 +124,7 @@ mongodb://localhost:27017
 ARIA will automatically create the required collections.
 
 ### 4. Setup Local LLM 
-<- u can use ollama too or even add api keys for your prefered models but have to change the code just little bit->
+u can use ollama too or even add api keys for your prefered models but have to change the code just little bit
 
 Run a local model using **LM Studio** and ensure the API endpoint is accessible.
 
