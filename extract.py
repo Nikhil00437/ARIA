@@ -1,4 +1,4 @@
-import subprocess, os, re
+import subprocess, os, re, json
 from typing import Optional
 from datetime import datetime
 try:
@@ -76,7 +76,7 @@ NL_TO_POWERSHELL = {
     ),
 }
 
-# Offline fallback rules (Feature 14) 
+# Offline fallback rules 
 OFFLINE_RULES = {
     r"\btime\b":                              ("time", None, "Get current time"),
     r"\bopen\s+notepad\b":                    ("command", "start notepad.exe", "Open Notepad"),
@@ -139,9 +139,7 @@ KNOWN_APP_DIRS = [
     r"C:\Windows",
 ]
 
-
 # Safety helpers
-
 def requires_confirmation(command: str) -> Optional[str]:
     lower = command.lower()
     for pattern, description in CONFIRMATION_PATTERNS:
@@ -149,14 +147,12 @@ def requires_confirmation(command: str) -> Optional[str]:
             return description
     return None
 
-
 def is_blocked(command: str) -> Optional[str]:
     lower = command.lower()
     for pattern in BLOCKED_PATTERNS:
         if re.search(pattern, lower):
             return pattern
     return None
-
 
 # PowerShell translator
 def translate_to_powershell(user_input: str) -> Optional[str]:
@@ -186,7 +182,6 @@ def run_powershell(ps_command: str, timeout: int = 20) -> str:
 
 # Offline fallback classifier
 def offline_classify(user_input: str) -> Optional[dict]:
-    """Fast regex-based intent classifier — no LLM needed."""
     lower = user_input.lower().strip()
     for pattern, (mode, action, reason) in OFFLINE_RULES.items():
         if re.search(pattern, lower):
@@ -227,8 +222,7 @@ def find_app(app_name: str) -> Optional[str]:
         )
         if result.stdout.strip():
             return result.stdout.strip().splitlines()[0]
-    except Exception:
-        pass
+    except Exception: pass
     if HAS_WINREG:
         for hive in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
             try:
@@ -239,8 +233,7 @@ def find_app(app_name: str) -> Optional[str]:
                 path, _ = winreg.QueryValueEx(key, "")
                 if path and os.path.exists(path):
                     return path
-            except Exception:
-                pass
+            except Exception: pass
     start_menus = [
         os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs"),
         os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
@@ -252,8 +245,7 @@ def find_app(app_name: str) -> Optional[str]:
                 for f in files:
                     if f.lower().startswith(base_name) and f.endswith(".lnk"):
                         return os.path.join(root, f)
-        except Exception:
-            pass
+        except Exception: pass
     for dir_path in KNOWN_APP_DIRS:
         candidate = os.path.join(dir_path, exe)
         if os.path.exists(candidate):
@@ -268,8 +260,7 @@ def find_file(filename: str, search_root: str = r"C:\Users") -> Optional[str]:
         )
         if result.stdout.strip():
             return result.stdout.strip().splitlines()[0]
-    except Exception:
-        pass
+    except Exception: pass
     return None
 
 def resolve_command(command: str) -> str:
@@ -345,20 +336,15 @@ def get_system_snapshot() -> dict:
             if "=" in line:
                 k, v = line.split("=", 1)
                 snapshot[k.strip()] = v.strip()
-    except Exception:
-        pass
+    except Exception: pass
     try:
         result = subprocess.run("hostname", shell=True, capture_output=True, text=True, timeout=3)
         snapshot["Hostname"] = result.stdout.strip()
-    except Exception:
-        pass
+    except Exception: pass
     return snapshot
 
-
-# ── System health monitor helper (Feature 11) ─────────────────────────────────
-
+# System health monitor helper
 def get_health_alerts() -> list[dict]:
-    """Return list of health alerts for CPU, RAM, disk. Called by background thread."""
     alerts = []
     try:
         # RAM
@@ -368,35 +354,12 @@ def get_health_alerts() -> list[dict]:
             capture_output=True, text=True, timeout=8
         )
         if result.stdout.strip():
-            import json
             data = json.loads(result.stdout.strip())
-            if data.get("MB", 0) > 800:
+            if data.get("MB", 0) > 1500:
                 alerts.append({
                     "type": "memory",
                     "message": f"⚠ {data['Name']} using {data['MB']} MB memory",
-                    "severity": "warning" if data["MB"] < 1500 else "critical"
+                    "severity": "warning" if data["MB"] < 3500 else "critical"
                 })
-    except Exception:
-        pass
-
-    try:
-        # Disk space
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-             "Get-PSDrive C | Select-Object @{N='FreePct';E={[math]::Round($_.Free/($_.Used+$_.Free)*100,1)}} | ConvertTo-Json"],
-            capture_output=True, text=True, timeout=8
-        )
-        if result.stdout.strip():
-            import json
-            data = json.loads(result.stdout.strip())
-            pct = data.get("FreePct", 100)
-            if pct < 15:
-                alerts.append({
-                    "type": "disk",
-                    "message": f"⚠ C: drive only {pct}% free",
-                    "severity": "warning" if pct > 5 else "critical"
-                })
-    except Exception:
-        pass
-
+    except Exception: pass
     return alerts
