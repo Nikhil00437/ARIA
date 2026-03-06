@@ -265,16 +265,6 @@ class TerminalPage(QWidget):
         color = "#ef9a9a" if output.startswith(("❌", "⛔")) else "#6a9a6a"
         self.terminal_display.append(f"<span style='color:{color}'>{output}</span>\n")
 
-    def append_warning(self, message: str):
-        self.terminal_display.append(
-            f"<span style='color:#ffcc00'>⚠ {message}</span>\n"
-        )
-
-    def append_error(self, message: str):
-        self.terminal_display.append(
-            f"<span style='color:#ef9a9a'>Error: {message}</span>\n"
-        )
-
     def append_info(self, message: str):
         self.terminal_display.append(
             f"<span style='color:#4caf50'>{message}</span>\n"
