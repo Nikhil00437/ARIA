@@ -156,4 +156,20 @@ def build_stylesheet(t: dict) -> str:
         QScrollBar::handle:vertical:hover {{ background: {accent2}40; }}
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
         QScrollBar:horizontal {{ height: 0px; }}
+
+        #micBtn {{
+            background: {sidebar}; color: {dim}; border: none;
+            border-top: 1px solid {border}; border-radius: 0;
+            padding: 0 20px; text-align: left; letter-spacing: 1px;
+        }}
+        #micBtn:hover {{ background: {chat_bg}; color: {accent}; }}
+        #micBtn:checked {{
+            background: {chat_bg}; color: #ff5252;
+            border-top: 1px solid {border};
+        }}
+
+        #sttLabel {{
+            color: #ffcc00; background: transparent;
+            padding: 2px 14px; letter-spacing: 1px; font-size: 8pt;
+        }}
     """

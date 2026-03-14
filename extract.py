@@ -94,6 +94,14 @@ OFFLINE_RULES = {
     r"\bplay\s+music\b":                      ("music", "play", "Play music"),
     r"\bshow\s+apps?\b":                      ("show_apps", None, "Show installed apps"),
     r"\bsystem\s*info\b":                     ("command", "systeminfo", "Show system information"),
+    # smart_search offline shortcuts
+    r"search\s+youtube\s+(for\s+)?\S":        ("smart_search", None, "YouTube search"),
+    r"(find|search)\s+\S.+\s+on\s+github\b":  ("smart_search", None, "GitHub search"),
+    r"(find|search|look\s*up)\s+\S.+\s+on\s+stackoverflow\b": ("smart_search", None, "StackOverflow search"),
+    r"\bgoogle\s+(how|what|why|who|when|where)\b": ("smart_search", None, "Google query"),
+    r"\bopen\s+github\s+\w":                  ("smart_search", None, "GitHub profile"),
+    r"\bopen\s+youtube\s+@":                  ("smart_search", None, "YouTube channel"),
+    r"\bsearch\s+(google|bing|duckduckgo)\s+(for\s+)?\S": ("smart_search", None, "Search engine query"),
 }
 
 # Error diagnosis patterns

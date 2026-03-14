@@ -7,6 +7,9 @@ class SignalBridge(QObject):
     suggestion_signal = pyqtSignal(list)
     timeline_signal   = pyqtSignal(str, str, str)   # timestamp, action, status
     image_signal      = pyqtSignal(str)              # path to generated image
+    stt_result_signal = pyqtSignal(str)              # transcribed text → input field
+    stt_error_signal  = pyqtSignal(str)              # STT error message
+    warning_signal    = pyqtSignal(str, str)         # message, severity (for Warnings page)
 
 class HealthMonitor(QObject):
     alert_signal = pyqtSignal(str, str)             # message, severity

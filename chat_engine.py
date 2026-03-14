@@ -2,7 +2,7 @@ import os, re, json, webbrowser, subprocess, wikipedia
 from datetime import datetime
 from typing import Optional
 from constants import SYSTEM_PROMPT
-from llm_client import classify_intent, summarize_output, explain_output, chat_completion
+from llm_client import classify_intent, summarize_output, explain_output, chat_completion, generate_search_url
 from database import log_command, get_command_history
 from extract import execute_command, translate_to_powershell, run_powershell, requires_confirmation
 from image_generation_try import ImageGenerator
@@ -257,7 +257,7 @@ def chat_with_llm(
         result.update({"content": f"🌐 Opened in browser: {url}", "action": url})
         return result
 
-    # Quick open 
+    # Quick open (homepage only — no search query)
     if mode == "quick_open" and confidence >= 0.70:
         action_lower = (action or "").lower()
         quick_links = {
@@ -278,7 +278,27 @@ def chat_with_llm(
             subprocess.Popen("start cmd", shell=True)
             result["content"] = "⚡ Opened Command Prompt"
         else:
-            result["content"] = "❓ Couldn't determine which app to open"
+            # Last resort: treat as a smart search rather than failing silently
+            resolved = generate_search_url(user_input)
+            webbrowser.open(resolved["url"])
+            result.update({
+                "content": f"🌐 {resolved['explanation']}\n`{resolved['url']}`",
+                "action": resolved["url"],
+            })
+        return result
+
+    # Smart search — site + query → construct URL and open
+    if mode == "smart_search" and confidence >= 0.65:
+        resolved = generate_search_url(user_input)
+        url  = resolved["url"]
+        site = resolved["site"]
+        expl = resolved["explanation"]
+        webbrowser.open(url)
+        result.update({
+            "content": f"🔍 {expl}\n`{url}`",
+            "action":  url,
+            "mode":    "smart_search",
+        })
         return result
 
     # Time 

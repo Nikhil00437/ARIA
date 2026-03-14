@@ -1,10 +1,8 @@
 import re
 from datetime import datetime
-
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QPushButton, QLabel, QListWidget, QListWidgetItem, QFrame
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtGui import QFont, QTextCursor
-
 from widgets import CollapsibleSection
 from constants import THEMES
 
@@ -65,6 +63,15 @@ class ChatPage(QWidget):
         input_lyt.addWidget(self.input_field)
         input_lyt.addWidget(send_btn)
         layout.addWidget(input_container)
+
+        # STT status label (hidden by default, shown while recording / transcribing)
+        self.stt_label = QLabel("")
+        self.stt_label.setObjectName("sttLabel")
+        self.stt_label.setFont(QFont("Consolas", 8))
+        self.stt_label.setAlignment(Qt.AlignCenter)
+        self.stt_label.hide()
+        layout.addWidget(self.stt_label)
+
         layout.addSpacing(8)
 
     # Public
@@ -89,6 +96,7 @@ class ChatPage(QWidget):
                 "quick_open": f"<span style='color:{t['accent']};font-size:7pt'>[ QUICK ]</span>",
                 "explain":    "<span style='color:#ffcc80;font-size:7pt'>[ EXPLAIN ]</span>",
                 "image_gen":  f"<span style='color:{t['accent2']};font-size:7pt'>[ IMAGE GEN ]</span>",
+                "smart_search": "<span style='color:#80deea;font-size:7pt'>[ 🔍 SEARCH ]</span>",
             }
             tag = mode_tag_map.get(mode, "")
             prefix = f"ARIA  {tag}"
@@ -128,6 +136,18 @@ class ChatPage(QWidget):
         for s in suggestions:
             self.suggestion_list.addItem(QListWidgetItem(s))
         self.suggestion_list.setVisible(bool(suggestions))
+
+    def set_stt_status(self, msg: str, color: str = "#ffcc00"):
+        if msg:
+            self.stt_label.setText(msg)
+            self.stt_label.setStyleSheet(f"color: {color}; letter-spacing: 1px;")
+            self.stt_label.show()
+        else:
+            self.stt_label.hide()
+
+    def set_input_text(self, text: str):
+        self.input_field.setText(text)
+        self.input_field.setFocus()
 
     def set_input_placeholder(self, text: str):
         self.input_field.setPlaceholderText(text)
@@ -270,6 +290,16 @@ class TerminalPage(QWidget):
             f"<span style='color:#4caf50'>{message}</span>\n"
         )
 
+    def append_warning(self, message: str):
+        self.terminal_display.append(
+            f"<span style='color:#ffcc00'>⚠ {message}</span>\n"
+        )
+
+    def append_error(self, message: str):
+        self.terminal_display.append(
+            f"<span style='color:#f44336'>❌ {message}</span>\n"
+        )
+
     def _submit(self):
         cmd = self.terminal_input.text().strip()
         if cmd:
@@ -311,3 +341,88 @@ class TimelinePage(QWidget):
             f"<span style='color:#aaa;'>{action}</span>"
         )
         self.timeline_display.moveCursor(QTextCursor.End)
+
+
+# Warnings page
+class WarningsPage(QWidget):
+    cleared = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        # Header row
+        header_row = QHBoxLayout()
+        header = QLabel("System Warnings")
+        header.setObjectName("pageTitle")
+        header.setFont(QFont("Consolas", 10, QFont.Bold))
+        header_row.addWidget(header)
+        header_row.addStretch()
+
+        self._count_label = QLabel("0 alerts")
+        self._count_label.setObjectName("confidenceLabel")
+        self._count_label.setFont(QFont("Consolas", 8))
+        header_row.addWidget(self._count_label)
+        layout.addLayout(header_row)
+
+        # Warnings display
+        self.display = QTextEdit()
+        self.display.setObjectName("terminalDisplay")
+        self.display.setReadOnly(True)
+        self.display.setFont(QFont("Consolas", 9))
+        layout.addWidget(self.display, stretch=1)
+
+        # Bottom bar
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(8)
+
+        clear_btn = QPushButton("Clear All")
+        clear_btn.setObjectName("termClearBtn")
+        clear_btn.setFont(QFont("Consolas", 9))
+        clear_btn.setFixedWidth(100)
+        clear_btn.clicked.connect(self._clear)
+        bottom_row.addWidget(clear_btn)
+
+        bottom_row.addStretch()
+
+        self._last_label = QLabel("No warnings yet")
+        self._last_label.setObjectName("confidenceLabel")
+        self._last_label.setFont(QFont("Consolas", 8))
+        bottom_row.addWidget(self._last_label)
+
+        layout.addLayout(bottom_row)
+
+        self._alert_count = 0
+
+    def add_warning(self, message: str, severity: str):
+        self._alert_count += 1
+        timestamp = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+
+        if severity == "critical":
+            icon  = "✖ CRITICAL"
+            color = "#f44336"
+        else:
+            icon  = "⚠ WARNING"
+            color = "#ffcc00"
+
+        html = (
+            f"<div style='margin-bottom:10px;border-left:3px solid {color};"
+            f"padding-left:10px;'>"
+            f"<span style='color:#555;font-size:7.5pt'>{timestamp}</span>&nbsp;&nbsp;"
+            f"<span style='color:{color};font-weight:bold;font-size:8pt'>{icon}</span>"
+            f"<div style='color:#ccc;margin-top:4px;font-size:9pt'>{message}</div>"
+            f"</div>"
+        )
+        self.display.append(html)
+        self.display.moveCursor(QTextCursor.End)
+        self._count_label.setText(f"{self._alert_count} alert{'s' if self._alert_count != 1 else ''}")
+        self._last_label.setText(f"Last: {timestamp}")
+
+    def _clear(self):
+        self.display.clear()
+        self._alert_count = 0
+        self._count_label.setText("0 alerts")
+        self._last_label.setText("No warnings yet")
+        self.cleared.emit()

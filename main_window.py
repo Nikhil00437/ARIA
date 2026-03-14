@@ -1,14 +1,12 @@
 import os, base64, threading
 from datetime import datetime
-
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFrame, QLabel, QPushButton, QStackedWidget
 from PyQt5.QtCore import Qt, QTimer, QByteArray, QBuffer
 from PyQt5.QtGui import QFont, QPixmap
-
 from constants import THEMES
 from styles import build_stylesheet
 from sidebar import Sidebar
-from pages import ChatPage, TerminalPage, TimelinePage
+from pages import ChatPage, TerminalPage, TimelinePage, WarningsPage
 from signals import SignalBridge, HealthMonitor
 from voice_engine import VoiceEngine
 from chat_engine import chat_with_llm
@@ -32,6 +30,8 @@ class ARIAWindow(QMainWindow):
         self.current_theme       = "cyber"
         self.pending_command     = None
         self.last_search_results: list = []
+        self._mic_active         = False       # STT recording state
+        self._unread_warnings    = 0           # badge counter
         # Services
         self.voice_engine = VoiceEngine()
         self.image_gen    = ImageGenerator()
@@ -41,6 +41,9 @@ class ARIAWindow(QMainWindow):
         self.bridge.suggestion_signal.connect(self._on_suggestions)
         self.bridge.timeline_signal.connect(self._on_timeline)
         self.bridge.image_signal.connect(self._on_image)
+        self.bridge.stt_result_signal.connect(self._on_stt_result)
+        self.bridge.stt_error_signal.connect(self._on_stt_error)
+        self.bridge.warning_signal.connect(self._on_warning_page)
         # Health monitor
         self.health_monitor = HealthMonitor(interval_ms=300_000)
         self.health_monitor.alert_signal.connect(self._on_health_alert)
@@ -62,7 +65,7 @@ class ARIAWindow(QMainWindow):
         self.sidebar.voice_toggled.connect(self._on_voice_toggled)
         self.sidebar.silent_toggled.connect(self._on_silent_toggled)
         self.sidebar.theme_changed.connect(self.apply_theme)
-        self.sidebar.image_mode_clicked.connect(self._on_image_mode)
+        self.sidebar.mic_pressed.connect(self._on_mic_pressed)
         root.addWidget(self.sidebar)
         # Main area
         main_area = QFrame()
@@ -114,6 +117,7 @@ class ARIAWindow(QMainWindow):
         self.chat_page     = ChatPage()
         self.terminal_page = TerminalPage()
         self.timeline_page = TimelinePage()
+        self.warnings_page = WarningsPage()
 
         self.chat_page.message_submitted.connect(self._send_message)
         self.chat_page.quick_action.connect(
@@ -121,10 +125,12 @@ class ARIAWindow(QMainWindow):
         )
         self.terminal_page.command_submitted.connect(self._run_terminal_command)
         self.terminal_page.export_requested.connect(self._export_terminal)
+        self.warnings_page.cleared.connect(lambda: self._reset_warning_badge())
 
         self.nav_stack.addWidget(self.chat_page)      # 0
         self.nav_stack.addWidget(self.terminal_page)  # 1
         self.nav_stack.addWidget(self.timeline_page)  # 2
+        self.nav_stack.addWidget(self.warnings_page)  # 3
 
         main_lyt.addWidget(self.nav_stack)
         root.addWidget(main_area, stretch=1)
@@ -134,9 +140,13 @@ class ARIAWindow(QMainWindow):
     # Page switching
     def _switch_page(self, index: int):
         self.nav_stack.setCurrentIndex(index)
-        titles = {0: "Chat", 1: "Terminal", 2: "Timeline"}
+        titles = {0: "Chat", 1: "Terminal", 2: "Timeline", 3: "Warnings"}
         self.page_title.setText(titles.get(index, ""))
         self.sidebar.set_active_page(index)
+        # Clear badge when user navigates to warnings page
+        if index == 3:
+            self._unread_warnings = 0
+            self.sidebar.set_warning_badge(0)
 
     # Theme
     def apply_theme(self, name: str = None):
@@ -200,7 +210,8 @@ class ARIAWindow(QMainWindow):
     def _on_health_alert(self, message: str, severity: str):
         color = "#ffcc00" if severity == "warning" else "#ff5252"
         self.sidebar.set_health(message, color)
-        self.chat_page.append_message("system", message, "system", self._theme())
+        # Route to Warnings page — not chat
+        self.bridge.warning_signal.emit(message, severity)
         if self.voice_enabled:
             self.voice_engine.speak(message, force=True)
 
@@ -213,11 +224,56 @@ class ARIAWindow(QMainWindow):
     def _on_silent_toggled(self, enabled: bool):
         self.silent_voice_mode = enabled
 
-    def _on_image_mode(self):
-        self.chat_page.set_input_placeholder("Describe the image you want to generate…")
-        self.chat_page.append_message(
-            "system", "🎨 Image generation mode. Type a prompt and press Send.", "image_gen", self._theme()
-        )
+    # STT handlers
+    def _on_mic_pressed(self):
+        if not self._mic_active:
+            # Start recording
+            ok = self.voice_engine.start_recording()
+            if not ok:
+                self.chat_page.set_stt_status(
+                    "⚠ Audio libs missing — pip install sounddevice soundfile numpy", "#f44336"
+                )
+                # Uncheck the button visually
+                self.sidebar.mic_btn.setChecked(False)
+                self.sidebar.mic_btn.setText("  ◎  Hold to Speak")
+                self.sidebar.mic_btn.setStyleSheet("")
+                return
+            self._mic_active = True
+            self.chat_page.set_stt_status("  ◉  Recording…  press mic again to stop", "#ff5252")
+        else:
+            # Stop and transcribe
+            self._mic_active = False
+            self.chat_page.set_stt_status("  ◌  Transcribing…", "#ffcc00")
+            self.voice_engine.stop_recording_and_transcribe(
+                on_result=lambda text: self.bridge.stt_result_signal.emit(text),
+                on_error=lambda msg:   self.bridge.stt_error_signal.emit(msg),
+            )
+
+    def _on_stt_result(self, text: str):
+        self.chat_page.set_stt_status("")
+        self.chat_page.set_input_text(text)
+        # Reset mic button state
+        self.sidebar.mic_btn.setChecked(False)
+        self.sidebar.mic_btn.setText("  ◎  Hold to Speak")
+        self.sidebar.mic_btn.setStyleSheet("")
+
+    def _on_stt_error(self, msg: str):
+        self.chat_page.set_stt_status(f"⚠ {msg}", "#f44336")
+        self.sidebar.mic_btn.setChecked(False)
+        self.sidebar.mic_btn.setText("  ◎  Hold to Speak")
+        self.sidebar.mic_btn.setStyleSheet("")
+
+    # Warnings page handler
+    def _on_warning_page(self, message: str, severity: str):
+        self.warnings_page.add_warning(message, severity)
+        # Increment badge only if user isn't on the warnings page right now
+        if self.nav_stack.currentIndex() != 3:
+            self._unread_warnings += 1
+            self.sidebar.set_warning_badge(self._unread_warnings)
+
+    def _reset_warning_badge(self):
+        self._unread_warnings = 0
+        self.sidebar.set_warning_badge(0)
 
     # Output mode
     def _toggle_output_mode(self):

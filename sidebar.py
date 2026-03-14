@@ -9,7 +9,7 @@ class Sidebar(QFrame):
     voice_toggled  = pyqtSignal(bool)
     silent_toggled = pyqtSignal(bool)
     theme_changed  = pyqtSignal(str)
-    image_mode_clicked = pyqtSignal()
+    mic_pressed    = pyqtSignal()   # STT mic button
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +43,7 @@ class Sidebar(QFrame):
             ("chat_btn",     "●  Chat",     0),
             ("term_btn",     "■  Terminal", 1),
             ("timeline_btn", "◉  Timeline", 2),
+            ("warn_btn",     "⚠  Warnings", 3),
         ]
         for obj_name, label, idx in nav_items:
             btn = QPushButton(label)
@@ -104,13 +105,14 @@ class Sidebar(QFrame):
         layout.addLayout(theme_row)
         layout.addSpacing(6)
 
-        # Image mode button
-        img_btn = QPushButton("  ◈  Image Mode")
-        img_btn.setObjectName("voiceBtn")
-        img_btn.setFont(QFont("Consolas", 9))
-        img_btn.setFixedHeight(34)
-        img_btn.clicked.connect(self.image_mode_clicked.emit)
-        layout.addWidget(img_btn)
+        # Mic button (STT)
+        self.mic_btn = QPushButton("  ◎  Hold to Speak")
+        self.mic_btn.setObjectName("micBtn")
+        self.mic_btn.setFont(QFont("Consolas", 9))
+        self.mic_btn.setFixedHeight(34)
+        self.mic_btn.setCheckable(True)
+        self.mic_btn.clicked.connect(self._on_mic)
+        layout.addWidget(self.mic_btn)
         layout.addSpacing(10)
 
     # Public helpers
@@ -154,3 +156,19 @@ class Sidebar(QFrame):
         state = "ON" if self._silent_on else "OFF"
         self.silent_btn.setText(f"  {dot}  Silent Voice  {state}")
         self.silent_toggled.emit(self._silent_on)
+
+    def _on_mic(self):
+        if self.mic_btn.isChecked():
+            self.mic_btn.setText("  ◉  Recording…  ")
+            self.mic_btn.setStyleSheet("color: #ff5252;")
+        else:
+            self.mic_btn.setText("  ◎  Hold to Speak")
+            self.mic_btn.setStyleSheet("")
+        self.mic_pressed.emit()
+
+    def set_warning_badge(self, count: int):
+        btn = self.nav_buttons.get("warn_btn")
+        if not btn:
+            return
+        label = f"⚠  Warnings  [{count}]" if count else "⚠  Warnings"
+        btn.setText(label)
