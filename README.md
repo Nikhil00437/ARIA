@@ -1,219 +1,200 @@
-# ARIA – Advanced Runtime Intelligence Assistant
+# ARIA — Advanced Runtime Intelligence Assistant
 
-![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python&logoColor=white)
+> A fully local, privacy-first AI desktop assistant for Windows. No cloud. No subscriptions. No data leaving your machine.
+
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
 ![PyQt5](https://img.shields.io/badge/GUI-PyQt5-green?logo=qt&logoColor=white)
-![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+![LM Studio](https://img.shields.io/badge/LLM-LM%20Studio-purple)
 ![MongoDB](https://img.shields.io/badge/Database-MongoDB-47A248?logo=mongodb&logoColor=white)
+![License](https://img.shields.io/github/license/Nikhil00437/ARIA)
+![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
 
-ARIA is a desktop AI assistant for Windows that combines local LLMs, system automation, and a modern PyQt interface. It allows users to control their computer using natural language while also supporting chat, automation, macros, image generation, and voice output.
+---
+
+## What is ARIA?
+
+ARIA is a **local-first AI desktop assistant** built with PyQt5 that runs entirely on your own hardware using [LM Studio](https://lmstudio.ai) for LLM inference. It converts natural language into system actions, generates images via Stable Diffusion, responds with a voice engine, and persists conversations in MongoDB — all without sending a single byte to an external server.
+
+Think of it as a privacy-respecting alternative to cloud AI assistants, engineered from scratch as a modular Python desktop application.
 
 ---
 
 ## Features
 
-* Natural language command execution
-* Local LLM-powered intent classification
-* Windows command and PowerShell automation
-* Desktop GUI built with PyQt5
-* Command history and session logging
-* Macro creation and execution
-* File search and quick application launch
-* Local image generation using Stable Diffusion
-* Voice output (text-to-speech)
-* MongoDB-based conversation persistence
+| Feature | Description |
+|---|---|
+| 💬 **Local LLM Chat** | Conversational AI powered by any model loaded in LM Studio |
+| 🎨 **Image Generation** | Stable Diffusion integration — generate images inline in the chat |
+| 🔊 **Voice Engine** | Text-to-speech responses via the built-in voice module |
+| 🗄️ **Persistent Memory** | Full conversation history stored locally in MongoDB |
+| ⚙️ **System Automation** | Natural language → Windows system commands via `executor.py` |
+| 📄 **Document Extraction** | Read and process file content with `extract.py` |
+| 🔒 **Zero Cloud Dependency** | All inference runs locally — no API keys, no subscriptions |
+| 🧩 **Modular Architecture** | 15 decoupled modules — easy to extend or swap components |
 
 ---
 
-## Architecture Overview
+## Architecture
 
-ARIA processes user input through an AI-assisted pipeline:
-
-1. User enters text in the desktop interface
-2. Intent classification determines the action type
-3. Commands are translated into system operations
-4. Execution engine runs commands or triggers AI features
-5. Results are returned to the GUI and stored in history
-
-This architecture allows ARIA to behave as both a chatbot and a system automation agent.
-
----
-
-## Tech Stack
-
-### Core
-
-* Python
-* PyQt5
-
-### AI / ML
-
-* Local LLMs (LM Studio)
-* Hugging Face / Transformers
-* Stable Diffusion (Diffusers + PyTorch)
-
-### System Integration
-
-* Windows Command Execution
-* PowerShell Automation
-
-### Data Storage
-
-* MongoDB
-
-### Other Libraries
-
-* OpenAI compatible API client
-* pyttsx3 (Text-to-Speech)
-
----
-
-## Project Structure
+ARIA is split into 15 focused modules, each with a single responsibility:
 
 ```
 ARIA/
-│
-├── main.py                 # Application entry point
-├── main_window.py          # Main GUI window
-├── chat_engine.py          # Core request routing logic
-├── llm_client.py           # LLM communication
-├── voice_engine.py         # Text-to-speech engine
-├── image_generation_try.py # Stable Diffusion image generation
-├── extract.py              # Command execution and translation
-├── database.py             # MongoDB logging and storage
-│
-├── pages.py                # GUI pages
-├── sidebar.py              # Sidebar navigation
-├── widgets.py              # Custom UI widgets
-├── styles.py               # Theme system
-├── constants.py            # Prompts and configuration
-└── signals.py              # Application signal bridge
+├── main.py                  # Entry point — bootstraps the application
+├── main_window.py           # Root PyQt5 window, layout orchestration
+├── pages.py                 # Page/view management (chat, settings, etc.)
+├── sidebar.py               # Navigation sidebar component
+├── widgets.py               # Reusable UI widgets
+├── styles.py                # Global stylesheet definitions
+├── signals.py               # Qt signal/slot definitions across modules
+├── chat_engine.py           # Core chat loop — assembles prompt, calls LLM, routes response
+├── llm_client.py            # LM Studio API client (OpenAI-compatible endpoint)
+├── voice_engine.py          # Text-to-speech engine
+├── image_generation_try.py  # Stable Diffusion image generation
+├── executor.py              # Natural language → system command execution
+├── extract.py               # File/document content extraction
+├── database.py              # MongoDB connection, conversation persistence
+└── constants.py             # App-wide configuration and constants
 ```
+
+---
+
+## Prerequisites
+
+- Windows 10 / 11
+- Python 3.10+
+- [LM Studio](https://lmstudio.ai) — installed and running with a model loaded
+- [MongoDB Community](https://www.mongodb.com/try/download/community) — running locally on default port `27017`
+- (Optional) Stable Diffusion — for image generation
 
 ---
 
 ## Installation
 
-### 1. Clone the repository
-
 ```bash
+# 1. Clone the repository
 git clone https://github.com/Nikhil00437/ARIA.git
 cd ARIA
-```
 
-### 2. Install dependencies
+# 2. Create a virtual environment
+python -m venv venv
+venv\Scripts\activate      # Windows
 
-```bash
+# 3. Install dependencies
 pip install -r requirements.txt
-```
 
-If a requirements file is not present, install manually:
+# 4. Start LM Studio and load your preferred model
+#    Enable the local server (default: http://localhost:1234)
 
-```bash
-pip install pyqt5 pymongo pyttsx3 wikipedia diffusers transformers torch
-```
+# 5. Ensure MongoDB is running
+#    Default connection: mongodb://localhost:27017
 
-### 3. Setup MongoDB
-
-Make sure MongoDB is running locally(you can use atlas too if u want):
-
-```
-mongodb://localhost:27017
-```
-
-ARIA will automatically create the required collections.
-
-### 4. Setup Local LLM 
-u can use ollama too or even add api keys for your prefered models but have to change the code just little bit
-
-Run a local model using **LM Studio** and ensure the API endpoint is accessible.
-
-Default endpoint used:
-
-```
-http://localhost:1234/v1
-```
-
-### 5. Run the application
-
-```bash
+# 6. Launch ARIA
 python main.py
 ```
 
 ---
 
-## Example Commands
+## Configuration
 
-ARIA can understand commands like:
+Edit `constants.py` to configure your setup:
 
+```python
+# LM Studio endpoint (default)
+LM_STUDIO_URL = "http://localhost:1234/v1"
+
+# MongoDB connection
+MONGO_URI = "mongodb://localhost:27017"
+DB_NAME = "aria_db"
+
+# Voice engine settings
+VOICE_RATE = 175       # Speech speed (words per minute)
+VOICE_VOLUME = 1.0     # Volume (0.0 – 1.0)
 ```
-open notepad
-show running services
-search pdf
-show top memory apps
-open youtube
-flush dns
-```
-
-It can also answer general questions or generate images.
 
 ---
 
-## Image Generation
-
-ARIA includes local image generation using Stable Diffusion.
-
-Example prompt:
+## How It Works
 
 ```
-a cyberpunk city at night with neon lights
+User types message
+        │
+        ▼
+  chat_engine.py          ← Assembles system prompt + conversation history
+        │
+        ▼
+  llm_client.py           ← Sends to LM Studio (OpenAI-compatible API)
+        │
+        ▼
+  Response received
+        │
+    ┌───┴────────────────────────────────┐
+    │                                    │
+    ▼                                    ▼
+voice_engine.py              executor.py / image_generation_try.py
+(text response)              (if system command or image prompt detected)
+    │                                    │
+    └───────────────┬────────────────────┘
+                    ▼
+             database.py          ← Saves exchange to MongoDB
+                    │
+                    ▼
+          UI updated (PyQt5)
 ```
 
-Generated images are saved automatically.
+---
+
+## Tech Stack
+
+| Component | Technology |
+|---|---|
+| GUI Framework | PyQt5 |
+| LLM Inference | LM Studio (OpenAI-compatible local API) |
+| Image Generation | Stable Diffusion |
+| Voice Engine | pyttsx3 / Windows SAPI |
+| Database | MongoDB (pymongo) |
+| Language | Python 3.10+ |
+
+---
+
+## Roadmap
+
+- [ ] Plugin system for custom command modules
+- [ ] Model switching from within the UI
+- [ ] RAG (Retrieval-Augmented Generation) over local documents
+- [ ] Hotkey activation (always-on-screen mode)
+- [ ] Settings panel for voice/model/database config
+- [ ] Linux support
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Here's how to get started:
+Contributions are welcome. To get started:
 
-1. **Fork** the repository
-2. **Create a branch** for your feature or fix:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-3. **Commit** your changes with a clear message:
-   ```bash
-   git commit -m "Add: description of your change"
-   ```
-4. **Push** to your fork:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-5. **Open a Pull Request** against the `main` branch
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Commit your changes: `git commit -m 'Add your feature'`
+4. Push and open a Pull Request
 
-Please keep PRs focused — one feature or fix per PR makes review much easier.
-
----
-
-## Future Improvements
-
-* Voice input (speech recognition)
-* Cross-platform support
-* Plugin system for custom skills
-* RAG-based knowledge retrieval
-* Better agent planning capabilities
-
----
-
-## Author
-
-**Nikhil** — AI & Data Science Undergraduate
-
-GitHub: [https://github.com/Nikhil00437](https://github.com/Nikhil00437)
+Please keep new features modular — one concern per file, consistent with the existing architecture.
 
 ---
 
 ## License
 
-This project is open-source and available under the [MIT License](LICENSE).
+MIT License — see [LICENSE](./LICENSE) for details.
+
+---
+
+## Author
+
+**Nikhil Bisht**
+
+[![GitHub](https://img.shields.io/badge/GitHub-Nikhil00437-181717?logo=github)](https://github.com/Nikhil00437)
+[![HuggingFace](https://img.shields.io/badge/HuggingFace-Nikhil1581-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/Nikhil1581)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-nikhil--bisht-0A66C2?logo=linkedin)](https://www.linkedin.com/in/nikhil-bisht-986047298/)
+
+---
+
+*If ARIA was useful or interesting, leaving a ⭐ on the repo is appreciated.*
