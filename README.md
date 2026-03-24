@@ -146,7 +146,7 @@ ARIA monitors your interaction patterns and proposes targeted configuration chan
 - **Classic** — Monochrome dark
 
 > yeah don't try minimal if you're used to dark mode
-> i tried and my i'm blind for like 20 sec
+> i tried and now i'm blind for like 20 sec
 ---
 
 ## Notes
