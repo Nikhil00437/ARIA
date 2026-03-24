@@ -52,7 +52,7 @@ class LLMClient:
         (r"\b(show|list) (apps|installed)\b",                   "show_apps",   0.95),
         (r"\b(ram|memory|cpu|disk|port|service|startup)\s*(usage|info|space|list)?\b", "powershell", 0.88),
         (r"\b(search|find|look up)\s+.+\s+on\s+(youtube|github|arxiv|stackoverflow|huggingface|pypi|npm|reddit)\b", "smart_search", 0.95),
-        (r"\bwhat is\b|\bexplain\b|\bwho (is|was)\b",          "wikipedia",   0.80),
+        (r"\bwho (is|was)\b|\bwhat is (the|a|an) \w+\b", "wikipedia", 0.75),
         (r"\bgenerate.*(image|picture|photo|art)\b",            "image_gen",   0.93),
         (r"\bexplain.*(code|function|class|error|snippet)\b",   "explain",     0.91),
         (r"^/history\b",                                        "history",     0.99),
