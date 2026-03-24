@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLab
 from PyQt5.QtCore import Qt, pyqtSignal
 from widgets import ConfidenceBadge, Separator
 
+#  Proposal Card
 class ProposalCard(QWidget):
     approved = pyqtSignal(str)   # proposal_id
     rejected = pyqtSignal(str)
@@ -12,42 +13,68 @@ class ProposalCard(QWidget):
         self.setObjectName("ProposalCard")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(6)
-        # Header row
-        header = QHBoxLayout()
-        title = QLabel(f"📝  {proposal.get('param_label', proposal['param_key'])}")
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        # Header
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+
+        title_text = proposal.get("param_label", proposal.get("param_key", "?"))
+        title = QLabel(f"⬡  {title_text}")
         title.setObjectName("ProposalTitle")
+
         badge = ConfidenceBadge(proposal.get("confidence", 0.0))
-        source_tag = QLabel(f"[{proposal.get('source', '?')}]")
+
+        src = proposal.get("source", "?")
+        source_tag = QLabel(f"[{src}]")
         source_tag.setObjectName("ProposalMeta")
 
-        header.addWidget(title)
-        header.addStretch()
-        header.addWidget(badge)
-        header.addWidget(source_tag)
-        layout.addLayout(header)
-        # Proposal text
-        text = QLabel(proposal.get("proposal_text", ""))
-        text.setObjectName("ProposalText")
-        text.setWordWrap(True)
-        layout.addWidget(text)
-        # Proposed value
-        val_label = QLabel(f"New value: <b>{proposal.get('param_value')}</b>")
-        val_label.setObjectName("ProposalMeta")
-        val_label.setTextFormat(Qt.RichText)
-        layout.addWidget(val_label)
-        # Param description
-        desc = QLabel(proposal.get("param_desc", ""))
-        desc.setObjectName("ProposalMeta")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
+        header_row.addWidget(title, 1)
+        header_row.addWidget(badge)
+        header_row.addWidget(source_tag)
+        layout.addLayout(header_row)
+        # Proposal description
+        proposal_text = QLabel(proposal.get("proposal_text", ""))
+        proposal_text.setObjectName("ProposalText")
+        proposal_text.setWordWrap(True)
+        layout.addWidget(proposal_text)
+        # Proposed value pill
+        val_row = QHBoxLayout()
+        val_row.setSpacing(6)
+
+        val_key = QLabel("New value")
+        val_key.setObjectName("ProposalMeta")
+
+        val_label = QLabel(f"  {proposal.get('param_value')}  ")
+        val_label.setStyleSheet(
+            "background: #00e5cc12;"
+            "color: #00e5cc;"
+            "border: 1px solid #00e5cc40;"
+            "border-radius: 6px;"
+            "padding: 2px 10px;"
+            "font-family: 'Cascadia Code', 'Consolas', monospace;"
+            "font-size: 8.5pt;"
+            "font-weight: 600;"
+        )
+        val_row.addWidget(val_key)
+        val_row.addWidget(val_label)
+        val_row.addStretch()
+        layout.addLayout(val_row)
+        # Description hint
+        desc_text = proposal.get("param_desc", "")
+        if desc_text:
+            desc = QLabel(desc_text)
+            desc.setObjectName("ProposalMeta")
+            desc.setWordWrap(True)
+            layout.addWidget(desc)
 
         sep = Separator()
         layout.addWidget(sep)
         # Action buttons
         btn_row = QHBoxLayout()
-        approve_btn = QPushButton("✅  Approve")
+        btn_row.setSpacing(8)
+
+        approve_btn = QPushButton("✓  Approve")
         approve_btn.setObjectName("ApproveBtn")
         approve_btn.clicked.connect(lambda: self.approved.emit(self._id))
 
@@ -60,95 +87,125 @@ class ProposalCard(QWidget):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
+#  Ledger Entry
 class LedgerEntryWidget(QWidget):
-    rollback_requested = pyqtSignal(str)   # entry _id
+    rollback_requested = pyqtSignal(str)
 
     def __init__(self, entry: dict, parent=None):
         super().__init__(parent)
-        rolled = entry.get("rolled_back", False)
+        rolled   = entry.get("rolled_back", False)
         rejected = entry.get("rejected", False)
         self.setObjectName("LedgerEntryRolledBack" if rolled else "LedgerEntry")
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 8, 14, 8)
+        layout.setSpacing(10)
         # Status icon
-        if rolled: icon = "↩️"
-        elif rejected: icon = "✕"
-        else: icon = "✅"
+        if rolled:      icon_text, icon_color = "↩", "#f59e0b"
+        elif rejected:  icon_text, icon_color = "✕", "#ef4444"
+        else:           icon_text, icon_color = "✓", "#00e5cc"
 
-        icon_label = QLabel(icon)
-        icon_label.setFixedWidth(24)
-        layout.addWidget(icon_label)
-        # Param + value
+        icon = QLabel(icon_text)
+        icon.setFixedWidth(18)
+        icon.setAlignment(Qt.AlignCenter)
+        icon.setStyleSheet(f"color: {icon_color}; background: transparent; font-weight: 700; font-size: 10pt;")
+        layout.addWidget(icon)
+        # Change description
         label = entry.get("param_label", entry.get("param_key", "?"))
-        if not rejected and not rolled: change_text = f"<b>{label}</b>  →  <code>{entry.get('new_value')}</code>  (was: <code>{entry.get('old_value')}</code>)"
-        elif rejected: change_text = f"<b>{label}</b>  — rejected"
-        else: change_text = f"<b>{label}</b>  — rolled back"
-        
-        change_label = QLabel(change_text)
+        if not rejected and not rolled: change_html = (
+                f"<b>{label}</b>"
+                f"  <span style='color:#6366f1;'>→</span>  "
+                f"<code style='color:#00e5cc;'>{entry.get('new_value')}</code>"
+                f"  <span style='color:#2e4560;font-size:8pt;'>"
+                f"was <code>{entry.get('old_value')}</code></span>"
+            )
+        elif rejected: change_html = f"<b>{label}</b>  <span style='color:#ef4444;'>rejected</span>"
+        else: change_html = f"<b>{label}</b>  <span style='color:#f59e0b;'>rolled back</span>"
+
+        change_label = QLabel(change_html)
         change_label.setObjectName("ProposalMeta")
         change_label.setTextFormat(Qt.RichText)
         layout.addWidget(change_label, 1)
+
         # Timestamp
         ts = entry.get("timestamp", "")
-        if hasattr(ts, "strftime"): ts_str = ts.strftime("%m/%d %H:%M")
-        else: ts_str = str(ts)[:16]
+        ts_str = ts.strftime("%m/%d  %H:%M") if hasattr(ts, "strftime") else str(ts)[:16]
         ts_label = QLabel(ts_str)
         ts_label.setObjectName("TimelineTime")
+        ts_label.setFixedWidth(72)
+        ts_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(ts_label)
-        # Rollback button (only for active approved entries)
+
+        # Rollback button
         if not rolled and not rejected:
+            entry_id = entry.get("_id", "")
             rb_btn = QPushButton("↩ Rollback")
             rb_btn.setObjectName("RollbackBtn")
-            rb_btn.setFixedWidth(90)
-            entry_id = entry.get("_id", "")
+            rb_btn.setFixedWidth(86)
             rb_btn.clicked.connect(lambda: self.rollback_requested.emit(entry_id))
             layout.addWidget(rb_btn)
 
+#  Active Modification Widget
 class ActiveModWidget(QWidget):
     def __init__(self, entry: dict, parent=None):
         super().__init__(parent)
         self.setObjectName("LedgerEntry")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
 
-        label = QLabel(f"🔧  <b>{entry.get('param_label', entry.get('param_key'))}</b>  =  <code>{entry.get('new_value')}</code>")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 8, 14, 8)
+        layout.setSpacing(10)
+
+        dot = QLabel("◉")
+        dot.setFixedWidth(16)
+        dot.setAlignment(Qt.AlignCenter)
+        dot.setStyleSheet("color: #00e5cc; background: transparent; font-size: 9pt;")
+        layout.addWidget(dot)
+
+        key   = entry.get("param_label", entry.get("param_key", "?"))
+        value = entry.get("new_value", "?")
+        label = QLabel(
+            f"<b>{key}</b>  "
+            f"<code style='color:#00e5cc;'>{value}</code>"
+        )
         label.setObjectName("ProposalText")
         label.setTextFormat(Qt.RichText)
         layout.addWidget(label, 1)
 
-        conf = entry.get("confidence", 0.0)
-        badge = ConfidenceBadge(conf)
+        badge = ConfidenceBadge(entry.get("confidence", 0.0))
         layout.addWidget(badge)
 
+#  Self-Mod Page
 class SelfModPage(QWidget):
-    approved  = pyqtSignal(str)   # proposal_id
-    rejected  = pyqtSignal(str)
-    rollback  = pyqtSignal(str)   # ledger entry _id
-    analyze   = pyqtSignal()
+    approved = pyqtSignal(str)
+    rejected = pyqtSignal(str)
+    rollback = pyqtSignal(str)
+    analyze  = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(12)
+
         # Header
         header_row = QHBoxLayout()
-        header = QLabel("🧬  Self-Modification System")
+
+        header = QLabel("Self-Modification")
         header.setObjectName("SectionHeader")
         header_row.addWidget(header)
         header_row.addStretch()
 
-        analyze_btn = QPushButton("🔍  Analyze Now")
+        analyze_btn = QPushButton("◈  Analyze Now")
         analyze_btn.setObjectName("AnalyzeBtn")
         analyze_btn.clicked.connect(self.analyze.emit)
         header_row.addWidget(analyze_btn)
+
         layout.addLayout(header_row)
         # Description
         desc = QLabel(
-            "ARIA monitors your interaction patterns and proposes targeted configuration changes. "
-            "All changes require your explicit approval and can be rolled back at any time."
+            "ARIA monitors your interaction patterns and proposes targeted "
+            "configuration changes. All changes require explicit approval and "
+            "can be rolled back at any time."
         )
         desc.setObjectName("ProposalMeta")
         desc.setWordWrap(True)
@@ -160,29 +217,29 @@ class SelfModPage(QWidget):
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
 
-        self._proposals_tab  = self._make_scroll_tab()
-        self._active_tab     = self._make_scroll_tab()
-        self._ledger_tab     = self._make_scroll_tab()
+        self._proposals_tab = self._make_scroll_tab()
+        self._active_tab    = self._make_scroll_tab()
+        self._ledger_tab    = self._make_scroll_tab()
 
         self._proposals_layout = self._proposals_tab[1]
         self._active_layout    = self._active_tab[1]
         self._ledger_layout    = self._ledger_tab[1]
 
-        self._tabs.addTab(self._proposals_tab[0], "📥  Proposals (0)")
-        self._tabs.addTab(self._active_tab[0],    "✅  Active (0)")
-        self._tabs.addTab(self._ledger_tab[0],    "📜  Ledger")
+        self._tabs.addTab(self._proposals_tab[0], "Proposals  (0)")
+        self._tabs.addTab(self._active_tab[0],    "Active  (0)")
+        self._tabs.addTab(self._ledger_tab[0],    "Ledger")
 
         layout.addWidget(self._tabs, 1)
-
         self._pending_count = 0
     # Tab factory
     def _make_scroll_tab(self):
         tab = QWidget()
         outer = QVBoxLayout(tab)
-        outer.setContentsMargins(0, 8, 0, 0)
+        outer.setContentsMargins(0, 10, 0, 0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
 
         container = QWidget()
         content_layout = QVBoxLayout(container)
@@ -208,7 +265,7 @@ class SelfModPage(QWidget):
                 card.approved.connect(self._on_approve)
                 card.rejected.connect(self._on_reject)
                 self._proposals_layout.insertWidget(self._proposals_layout.count() - 1, card)
-        self._tabs.setTabText(0, f"📥  Proposals ({self._pending_count})")
+        self._tabs.setTabText(0, f"Proposals  ({self._pending_count})")
 
     def load_active_mods(self, mods: list):
         self._clear_layout(self._active_layout)
@@ -218,14 +275,13 @@ class SelfModPage(QWidget):
                 self._empty_label("No active modifications — all settings are at defaults.")
             )
         else:
-            for m in mods:
-                widget = ActiveModWidget(m)
-                self._active_layout.insertWidget(self._active_layout.count() - 1, widget)
-        self._tabs.setTabText(1, f"✅  Active ({len(mods)})")
+            for m in mods: self._active_layout.insertWidget(
+                    self._active_layout.count() - 1, ActiveModWidget(m)
+                )
+        self._tabs.setTabText(1, f"Active  ({len(mods)})")
 
     def load_ledger(self, entries: list):
         self._clear_layout(self._ledger_layout)
-
         if not entries: self._ledger_layout.insertWidget(
                 self._ledger_layout.count() - 1,
                 self._empty_label("No modification history yet.")
@@ -237,9 +293,7 @@ class SelfModPage(QWidget):
                 self._ledger_layout.insertWidget(self._ledger_layout.count() - 1, widget)
 
     def add_proposal(self, proposals: list):
-        # Reload fully for simplicity (proposals lists are small)
         self.load_proposals(proposals)
-        # Switch to proposals tab to draw attention
         self._tabs.setCurrentIndex(0)
 
     def remove_proposal_card(self, proposal_id: str):
@@ -254,12 +308,13 @@ class SelfModPage(QWidget):
                     break
 
         self._pending_count = max(0, self._pending_count - 1)
-        self._tabs.setTabText(0, f"📥  Proposals ({self._pending_count})")
+        self._tabs.setTabText(0, f"Proposals  ({self._pending_count})")
 
-        if self._pending_count == 0:
-            self._proposals_layout.insertWidget(
+        if self._pending_count == 0: self._proposals_layout.insertWidget(
                 self._proposals_layout.count() - 1,
-                self._empty_label("All proposals decided. Click 'Analyze Now' to find more patterns.")
+                self._empty_label(
+                    "All proposals decided. Click 'Analyze Now' to find more patterns."
+                )
             )
     # Signal handlers
     def _on_approve(self, proposal_id: str):
@@ -276,14 +331,15 @@ class SelfModPage(QWidget):
     def _clear_layout(self, layout):
         while layout.count() > 1:
             item = layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-                item.widget().deleteLater()
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
 
     def _empty_label(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setObjectName("ProposalMeta")
         label.setAlignment(Qt.AlignCenter)
         label.setWordWrap(True)
-        label.setContentsMargins(20, 40, 20, 40)
+        label.setContentsMargins(24, 48, 24, 48)
         return label

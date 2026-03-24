@@ -306,8 +306,7 @@ class ARIAWindow(QMainWindow):
                 self._signals.chat_response.emit("assistant",
                     f"✅ Found **{len(proposals)}** behavioral pattern(s). Check the **Self-Mod** tab to approve or reject."
                 )
-            else:
-                self._signals.chat_response.emit("assistant",
+            else: self._signals.chat_response.emit("assistant",
                     "No significant patterns detected yet. Keep using ARIA and I'll analyze again as we interact more."
                 )
             self._signals.status_update.emit("Ready")
@@ -315,7 +314,7 @@ class ARIAWindow(QMainWindow):
     # Runtime Config Application
     def _apply_runtime_change(self, key: str, value):
         if key == "default_theme": self._apply_theme(str(value))
-        elif key == "tts_enabled": 
+        elif key == "tts_enabled":  
             if not value: self._voice.stop_speaking()
         elif key == "silent_mode":
             self._voice.set_silent_mode(bool(value))
