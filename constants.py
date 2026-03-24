@@ -1,254 +1,256 @@
+# LM Studio
+LM_STUDIO_BASE_URL   = "http://localhost:1234/v1"
+CHAT_MODEL           = "qwen3-vl-8b-instruct"
+CLASSIFIER_MODEL     = "qwen3-vl-8b-instruct"   # swap for smaller fast model if available
+LLM_TIMEOUT          = 30
+LLM_CHAT_TEMPERATURE = 0.7
+LLM_CLASS_TEMPERATURE= 0.1
+# MongoDB
+MONGO_URI    = "mongodb://localhost:27017"
+MONGO_DB     = "aria_db"
+COL_SESSIONS = "sessions"
+COL_COMMANDS = "command_logs"
+COL_SELFMOD  = "selfmod_ledger"
+COL_PROFILE  = "behavioral_profile"
+# Themes
 THEMES = {
     "cyber": {
-        "bg":        "#0a0a0a",
-        "sidebar":   "#0f0f0f",
-        "accent":    "#00e676",
-        "accent2":   "#00c853",
-        "text":      "#d0d0d0",
-        "dim":       "#5a5a5a",
-        "border":    "#1a1a1a",
-        "chat_bg":   "#080808",
-        "term_bg":   "#060606",
-        "term_text": "#7fbf7f",
+        "bg":        "#0a0f0a",
+        "bg2":       "#0d1a0d",
+        "bg3":       "#112211",
+        "accent":    "#00ff88",
+        "accent2":   "#00cc66",
+        "text":      "#ccffcc",
+        "text2":     "#88bb88",
+        "dim":       "#446644",
+        "border":    "#1a4a1a",
+        "sidebar":   "#0d1a0d",
+        "chat_bg":   "#0a0f0a",
+        "term_bg":   "#050a05",
+        "term_text": "#00ff88",
+        "warning":   "#ffaa00",
+        "error":     "#ff4444",
+        "success":   "#00ff88",
+        "user_msg":  "#0d2a0d",
+        "ai_msg":    "#0a1a0a",
     },
     "minimal": {
-        "bg":        "#f5f5f5",
-        "sidebar":   "#ffffff",
-        "accent":    "#1976d2",
-        "accent2":   "#1565c0",
-        "text":      "#212121",
-        "dim":       "#9e9e9e",
-        "border":    "#e0e0e0",
-        "chat_bg":   "#fafafa",
-        "term_bg":   "#263238",
-        "term_text": "#80cbc4",
+        "bg":        "#f5f7fa",
+        "bg2":       "#eef1f5",
+        "bg3":       "#e5eaf0",
+        "accent":    "#2563eb",
+        "accent2":   "#1d4ed8",
+        "text":      "#1e293b",
+        "text2":     "#64748b",
+        "dim":       "#94a3b8",
+        "border":    "#cbd5e1",
+        "sidebar":   "#eef1f5",
+        "chat_bg":   "#f5f7fa",
+        "term_bg":   "#1e293b",
+        "term_text": "#f5f7fa",
+        "warning":   "#d97706",
+        "error":     "#dc2626",
+        "success":   "#16a34a",
+        "user_msg":  "#dbeafe",
+        "ai_msg":    "#f1f5f9",
     },
     "classic": {
-        "bg":        "#0c0c0c",
-        "sidebar":   "#0c0c0c",
-        "accent":    "#c8c8c8",
-        "accent2":   "#a0a0a0",
-        "text":      "#c8c8c8",
+        "bg":        "#1a1a1a",
+        "bg2":       "#222222",
+        "bg3":       "#2a2a2a",
+        "accent":    "#aaaaaa",
+        "accent2":   "#888888",
+        "text":      "#dddddd",
+        "text2":     "#888888",
         "dim":       "#555555",
         "border":    "#333333",
-        "chat_bg":   "#0c0c0c",
-        "term_bg":   "#0c0c0c",
-        "term_text": "#c8c8c8",
+        "sidebar":   "#222222",
+        "chat_bg":   "#1a1a1a",
+        "term_bg":   "#111111",
+        "term_text": "#00ff00",
+        "warning":   "#ccaa44",
+        "error":     "#cc4444",
+        "success":   "#44aa44",
+        "user_msg":  "#2a2a2a",
+        "ai_msg":    "#1e1e1e",
     },
 }
+DEFAULT_THEME = "cyber"
+# System Prompt
+SYSTEM_PROMPT = """You are ARIA — Advanced Runtime Intelligence Assistant. You are a local, private, fast AI assistant running entirely on-device.
 
-SYSTEM_PROMPT = """You are ARIA — an Advanced Runtime Intelligence Assistant running on Windows.
-You can chat, execute commands, search Wikipedia, open websites, play music, search files, and more.
+Your personality: precise, helpful, slightly dry. You never hallucinate — if unsure, say so.
+You assist with system tasks, information retrieval, file operations, code explanation, and general Q&A.
+Keep responses concise unless the user asks for detail. Format with markdown when it aids clarity.
+Never suggest cloud services or external APIs — you are local-first by design."""
+# Intent Classifier Prompt
+INTENT_CLASSIFIER_PROMPT = """Classify the user message into exactly one intent mode.
 
-CAPABILITIES:
-- File operations: dir, copy, move, del, mkdir
-- App launching: start app.exe (auto-resolves paths)
-- System info: tasklist, systeminfo, ipconfig, time
-- Task management: taskkill /im process.exe
-- Web search: Wikipedia or browser
-- Scripting: Run .bat, .ps1, .py files
-- Music player: Find and play .mp3 files
-- File search: Search by extension (.pdf, .docx, .py, etc.)
-- App listing: Show all installed applications
-- Quick access: YouTube, Google, Stack Overflow, Spotify, VS Code, CMD
-- PowerShell: Natural language → PowerShell commands
-- Explain: Explain any command or output in detail
-- Image Generation: Can generate image using stablediffusion, torch, transformer, pillow
+Respond ONLY with valid JSON, no explanation, no markdown:
+{"mode": "<MODE>", "confidence": <0.0-1.0>}
 
-COMMAND FORMAT:
-When you need to execute a Windows command, respond with JSON:
-{"mode": "command", "command": "your windows command here", "explanation": "brief explanation"}
+Modes:
+- chat          : general conversation or question
+- command       : run a system command or app
+- wikipedia     : factual lookup / "what is X"
+- browser       : open a URL or website
+- music         : play music
+- search        : search the web or a platform
+- show_apps     : list installed apps
+- time          : current time or date
+- quick_open    : open a file or folder
+- smart_search  : search a specific site (youtube, github, arxiv, etc)
+- powershell    : system info query (RAM, CPU, disk, services, etc)
+- explain       : explain code or a concept in detail
+- history       : show command history
+- rerun         : re-execute a previous command
+- image_gen     : generate an image
 
-For web searches:
-{"mode": "wikipedia", "query": "search term", "explanation": "why searching"}
+User message: {message}"""
+# Summarize Prompt
+SUMMARIZE_PROMPT = """Summarize the following output in 2-4 concise bullet points. Be direct, no preamble:
 
-For opening URLs:
-{"mode": "browser", "url": "https://...", "explanation": "why opening"}
+{output}"""
+# Explain Prompt
+EXPLAIN_PROMPT = """Explain the following clearly and concisely. Use markdown. Target a developer audience:
 
-For playing music:
-{"mode": "music", "action": "play", "explanation": "finding and playing music"}
+{content}"""
+# Smart URL Generation Prompt
+URL_GEN_PROMPT = """Generate the best search/browse URL for this request. Return ONLY the URL, nothing else.
 
-For file search:
-{"mode": "search", "extension": "mp3", "explanation": "searching for files"}
-
-For showing apps:
-{"mode": "show_apps", "explanation": "listing installed applications"}
-
-For normal chat:
-{"mode": "chat", "message": "your response", "explanation": ""}
-
-For image generation:
-{"mode": "image_gen", "message": "prompt", "explanation":""}
-
-RULES:
-- Windows commands only (no Linux: ls, grep, etc.)
-- Use %USERPROFILE% for user home
-- Be concise and helpful
-- Default to chat mode when unsure
-- Respond in natural language ONLY
-- NEVER output JSON
-"""
-
-INTENT_CLASSIFIER_PROMPT = """You are an intent classifier for ARIA Windows assistant.
-
-Analyze the user's message and determine the action:
-- CHAT: explanation, discussion, questions
-- COMMAND: Windows system action (open, run, list, kill, search files)
-- WIKIPEDIA: looking up information/facts
-- BROWSER: opening a website
-- MUSIC: play music from device
-- SEARCH: search for files by extension
-- SHOW_APPS: list installed applications
-- TIME: get current time
-- QUICK_OPEN: YouTube, Google, Stack Overflow, Spotify, VS Code, CMD (homepage only, no search query)
-- SMART_SEARCH: open a site AND search for something within it (e.g. "search youtube for X", "find X on github", "look up X on stackoverflow", "open github username")
-- POWERSHELL: natural language system queries (memory, services, ports, etc.)
-- EXPLAIN: explain a command or system output
-- HISTORY: show command history
-- RERUN: re-run a previous command
-- IMAGE_GEN: image generation prompt
-
-Respond with ONLY valid JSON:
-{
-  "mode": "chat"|"command"|"wikipedia"|"image_gen"|"browser"|"music"|"search"|"show_apps"|"time"|"quick_open"|"smart_search"|"powershell"|"explain"|"history"|"rerun",
-  "confidence": 0.0-1.0,
-  "reason": "why this mode",
-  "action": "specific action or null"
-}
-
-Examples:
-"open notepad" → {"mode": "command", "confidence": 0.95, "reason": "launch app", "action": "start notepad.exe"}
-"who is Einstein" → {"mode": "wikipedia", "confidence": 0.90, "reason": "factual lookup", "action": "Albert Einstein"}
-"open youtube" → {"mode": "quick_open", "confidence": 0.95, "reason": "quick link, no search query", "action": "youtube"}
-"search youtube for network chuck" → {"mode": "smart_search", "confidence": 0.97, "reason": "site + query", "action": null}
-"find pytorch on github" → {"mode": "smart_search", "confidence": 0.96, "reason": "github search", "action": null}
-"open github nikhil00437" → {"mode": "smart_search", "confidence": 0.95, "reason": "direct profile url", "action": null}
-"look up asyncio on stackoverflow" → {"mode": "smart_search", "confidence": 0.95, "reason": "stackoverflow search", "action": null}
-"google how to fix pip" → {"mode": "smart_search", "confidence": 0.93, "reason": "google search query", "action": null}
-"play music" → {"mode": "music", "confidence": 0.93, "reason": "play mp3 files", "action": "play"}
-"search pdf" → {"mode": "search", "confidence": 0.88, "reason": "find files", "action": "pdf"}
-"what time is it" → {"mode": "time", "confidence": 0.97, "reason": "get time", "action": null}
-"generate an image" → {"mode": "image_gen", "confidence": 0.98, "reason": "generate image", "action": "generate image"}
-"show apps" → {"mode": "show_apps", "confidence": 0.92, "reason": "list applications", "action": null}
-"show top memory apps" → {"mode": "powershell", "confidence": 0.91, "reason": "NL system query", "action": "show top memory apps"}
-"explain systeminfo" → {"mode": "explain", "confidence": 0.93, "reason": "explain command", "action": "systeminfo"}
-"/history" → {"mode": "history", "confidence": 1.0, "reason": "show history", "action": null}
-"/rerun 3" → {"mode": "rerun", "confidence": 1.0, "reason": "re-execute command", "action": "3"}
-"""
-
-SUMMARIZE_PROMPT = """You are a concise output summarizer for a Windows CLI assistant.
-Given raw command output, produce a SUMMARY mode response:
-- Use bullet points
-- Include key numbers/names
-- Max 8 bullets
-- Highlight important values
-Only output the summary, nothing else."""
-
-EXPLAIN_PROMPT = """You are an expert Windows systems teacher. 
-Given a command name or raw system output, explain it clearly:
-- What the command does
-- Key fields/columns and their meaning
-- Any important values to watch
-- Common use cases
-Be educational but concise."""
-
-SUGGESTION_MAP = {
-    "open": ["open notepad", "open calculator", "open explorer", "open cmd",
-             "open VS Code", "open YouTube", "open Google", "open Spotify"],
-    "search youtube": ["search youtube for ", "search youtube for python tutorial",
-                       "search youtube for network chuck", "search youtube for lofi music"],
-    "search github":  ["search github for ", "find  on github", "open github "],
-    "search google":  ["google how to ", "search google for ", "google what is "],
-    "find":           ["find  on github", "find  on stackoverflow", "find  on pypi"],
-    "search": ["search pdf", "search py", "search docx", "search mp3",
-               "search txt", "search xlsx", "search zip"],
-    "kill": ["kill chrome", "kill notepad", "kill explorer", "kill cmd"],
-    "show": ["show top memory apps", "show running services",
-             "show open ports", "show disk space", "show startup apps"],
-    "list": ["list running services", "list stopped services",
-             "list installed apps", "list processes", "list users"],
-    "/": ["/history", "/rerun "],
-    "explain": ["explain systeminfo", "explain tasklist",
-                "explain ipconfig", "explain netstat"],
-    "play": ["play music"],
-    "run": ["run clean"],
-}
-
-# URL Search Templates
-# Keys are canonical site names; value is the search URL with {query} placeholder.
-# The LLM picks the right entry and fills in the query slug.
-SEARCH_URL_TEMPLATES = {
-    # Video / streaming
-    "youtube":      "https://www.youtube.com/results?search_query={query}",
-    "twitch":       "https://www.twitch.tv/search?term={query}",
-    "vimeo":        "https://vimeo.com/search?q={query}",
-
-    # Dev / tech
-    "github":       "https://github.com/search?q={query}&type=repositories",
-    "stackoverflow":"https://stackoverflow.com/search?q={query}",
-    "pypi":         "https://pypi.org/search/?q={query}",
-    "npm":          "https://www.npmjs.com/search?q={query}",
-    "dockerhub":    "https://hub.docker.com/search?q={query}",
-    "huggingface":  "https://huggingface.co/search/full-text?q={query}",
-    "arxiv":        "https://arxiv.org/search/?query={query}&searchtype=all",
-
-    # Search engines
-    "google":       "https://www.google.com/search?q={query}",
-    "bing":         "https://www.bing.com/search?q={query}",
-    "duckduckgo":   "https://duckduckgo.com/?q={query}",
-
-    # Shopping / media
-    "amazon":       "https://www.amazon.in/s?k={query}",
-    "flipkart":     "https://www.flipkart.com/search?q={query}",
-    "spotify":      "https://open.spotify.com/search/{query}",
-
-    # Knowledge / docs
-    "wikipedia":    "https://en.wikipedia.org/wiki/Special:Search?search={query}",
-    "reddit":       "https://www.reddit.com/search/?q={query}",
-    "mdn":          "https://developer.mozilla.org/en-US/search?q={query}",
-    "devdocs":      "https://devdocs.io/#q={query}",
-
-    # Maps / local
-    "maps":         "https://www.google.com/maps/search/{query}",
-    "googlemaps":   "https://www.google.com/maps/search/{query}",
-}
-
-# Aliases → canonical key  (handles user shorthand / typos)
-SITE_ALIASES = {
-    "yt":           "youtube",
-    "gh":           "github",
-    "so":           "stackoverflow",
-    "hf":           "huggingface",
-    "ddg":          "duckduckgo",
-    "wiki":         "wikipedia",
-    "amzn":         "amazon",
-    "gmap":         "maps",
-    "google maps":  "maps",
-    "npm registry": "npm",
-}
-
-# URL Generation LLM Prompt
-URL_GEN_PROMPT = """You are a URL builder for ARIA, a Windows AI assistant.
-
-Given a user's natural-language request, extract:
-1. The target website (pick from the known sites below, or use google as fallback)
-2. The search query slug (URL-encoded, spaces → +)
-
-Known sites and their search URL patterns:
-{templates}
+Request: {query}
 
 Rules:
-- Use the EXACT template from the list above for the matched site
-- Replace {{query}} with the URL-encoded search term (spaces → +, lowercase)
-- If the user mentions a username / profile (e.g. "open github nikhil00437"), go directly:
-  github profile  → https://github.com/{{username}}
-  youtube channel → https://www.youtube.com/@{{handle}}
-- If no specific site is mentioned, default to google
-- Respond with ONLY valid JSON, no markdown, no explanation:
+- Prefer direct URLs over search pages when the target is obvious
+- Use HTTPS always
+- No markdown, no explanation"""
+# Behavioral Inference Prompt
+BEHAVIORAL_INFERENCE_PROMPT = """Analyze this interaction history and identify behavioral patterns that suggest the user wants ARIA configured differently.
 
-{
-  "site": "youtube",
-  "url": "https://www.youtube.com/results?search_query=network+chuck",
-  "explanation": "Searching YouTube for Network Chuck"
+History (recent {n} interactions):
+{history}
+
+Identify up to 5 concrete patterns. For each, respond ONLY with valid JSON array:
+[
+  {{
+    "pattern": "<short description>",
+    "evidence": "<what in history supports this>",
+    "proposed_change": "<specific config param and new value>",
+    "param_key": "<exact key from MODIFIABLE_PARAMS>",
+    "param_value": <new value>,
+    "confidence": <0.0-1.0>,
+    "reversible": true
+  }}
+]
+
+MODIFIABLE_PARAMS available:
+- output_mode: "verbose" | "summary"
+- smart_search_threshold: float 0.4-0.9
+- tts_enabled: bool
+- silent_mode: bool  
+- default_theme: "cyber" | "minimal" | "classic"
+- suggestion_count: int 3-8
+- custom_shortcuts: dict of alias->app/url
+- preferred_search_sites: list of site names
+- confirmation_verbosity: "full" | "brief"
+- response_length_preference: "concise" | "detailed"
+
+Only return the JSON array. No explanation."""
+# Modification Proposal Prompt
+PROPOSAL_GENERATION_PROMPT = """Given this behavioral pattern, write a clear, human-readable modification proposal for the user to approve or reject.
+
+Pattern: {pattern}
+Proposed change: {proposed_change}
+Confidence: {confidence}
+
+Write 2 sentences max. First sentence: what ARIA noticed. Second: what it wants to change. Be specific with values.
+No markdown, no bullet points, plain text."""
+# URL Search Templates
+SEARCH_TEMPLATES = {
+    "google":       "https://www.google.com/search?q={q}",
+    "youtube":      "https://www.youtube.com/results?search_query={q}",
+    "github":       "https://github.com/search?q={q}&type=repositories",
+    "stackoverflow": "https://stackoverflow.com/search?q={q}",
+    "huggingface":  "https://huggingface.co/search/full-text?q={q}",
+    "arxiv":        "https://arxiv.org/search/?query={q}&searchtype=all",
+    "pypi":         "https://pypi.org/search/?q={q}",
+    "npm":          "https://www.npmjs.com/search?q={q}",
+    "wikipedia":    "https://en.wikipedia.org/wiki/Special:Search?search={q}",
+    "reddit":       "https://www.reddit.com/search/?q={q}",
+    "twitter":      "https://twitter.com/search?q={q}",
+    "linkedin":     "https://www.linkedin.com/search/results/all/?keywords={q}",
+    "amazon":       "https://www.amazon.in/s?k={q}",
+    "flipkart":     "https://www.flipkart.com/search?q={q}",
+    "maps":         "https://www.google.com/maps/search/{q}",
+    "imdb":         "https://www.imdb.com/find?q={q}",
+    "docs":         "https://docs.python.org/3/search.html?q={q}",
+    "mdn":          "https://developer.mozilla.org/en-US/search?q={q}",
+    "dockerhub":    "https://hub.docker.com/search?q={q}",
+    "kaggle":       "https://www.kaggle.com/search?q={q}",
 }
-"""
+SITE_ALIASES = {
+    "yt": "youtube", "gh": "github", "so": "stackoverflow",
+    "hf": "huggingface", "wiki": "wikipedia", "gmap": "maps",
+    "fk": "flipkart", "amz": "amazon",
+}
+# NL → PowerShell translation table
+POWERSHELL_PATTERNS = {
+    r"(ram|memory) usage":       "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, @{N='RAM_MB';E={[math]::Round($_.WorkingSet64/1MB,1)}}",
+    r"cpu usage":                "Get-WmiObject Win32_Processor | Select-Object Name, LoadPercentage",
+    r"disk (space|usage)":       "Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N='Used_GB';E={[math]::Round($_.Used/1GB,2)}}, @{N='Free_GB';E={[math]::Round($_.Free/1GB,2)}}",
+    r"running (services|service)": "Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object Name, DisplayName",
+    r"open ports":               "netstat -ano | findstr LISTENING",
+    r"startup (apps|programs)":  "Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location",
+    r"(logged.in|current) users": "query user",
+    r"wifi passwords?":          "netsh wlan show profiles | Select-String 'All User Profile' | ForEach-Object { $p = ($_ -split ':')[1].Trim(); netsh wlan show profile name=$p key=clear | Select-String 'Key Content' }",
+    r"dns (flush|cache)":        "Clear-DnsClientCache; Write-Host 'DNS cache flushed'",
+    r"installed (apps|software)": "Get-WmiObject Win32_Product | Select-Object Name, Version | Sort-Object Name",
+    r"(ip|network) (info|address)": "ipconfig /all",
+    r"(system|pc) info":         "systeminfo | Select-String 'OS|Memory|Processor'",
+    r"environment variables":    "Get-ChildItem Env: | Sort-Object Name",
+    r"top processes":            "Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, Id",
+}
+# Blocked Command Patterns
+BLOCKED_PATTERNS = [
+    r"format\s+[a-zA-Z]:",
+    r"rm\s+-rf\s+/",
+    r"del\s+/[fqs]+\s+.*system32",
+    r"reg\s+delete.*\\system",
+    r"bcdedit",
+    r"diskpart",
+    r"cipher\s+/w",
+    r"net\s+user\s+administrator\s+/delete",
+    r"shutdown\s+/r\s+/o",
+]
+# Confirmation-Required Patterns
+CONFIRM_PATTERNS = [
+    r"\bdel\b",
+    r"\brmdir\b",
+    r"\btaskkill\b",
+    r"\bshutdown\b",
+    r"\brestart\b",
+    r"\bformat\b",
+    r"\bnetsh\s+reset\b",
+    r"stop-process",
+    r"remove-item",
+]
+# Suggestion Map
+SUGGESTIONS = {
+    "chat":        ["Tell me something interesting", "Explain quantum computing", "What can you do?"],
+    "command":     ["Open Task Manager", "List running processes", "Check disk space"],
+    "powershell":  ["Show RAM usage", "List running services", "Show open ports"],
+    "search":      ["Search GitHub for FastAPI", "Find Python tutorials on YouTube", "Search arXiv for LLM papers"],
+    "image_gen":   ["Generate a cyberpunk city", "Create a minimalist logo", "Draw a futuristic robot"],
+}
+# Self-Modification Boundary — LOCKED params
+SELFMOD_LOCKED_PARAMS = {
+    "blocked_patterns",
+    "confirm_patterns",
+    "system_prompt_safety",
+    "executor_security",
+    "mongo_uri",
+    "lm_studio_base_url",
+}
+# Health Monitor
+HEALTH_CHECK_INTERVAL_MS = 300_000   # 5 minutes
+HEALTH_RAM_THRESHOLD_MB  = 500       # alert if any process exceeds this

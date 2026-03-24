@@ -1,174 +1,165 @@
-from PyQt5.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
+import psutil
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QComboBox, QFrame
+from PyQt5.QtCore import QTimer, pyqtSignal
 from constants import THEMES
 
-class Sidebar(QFrame):
-    # Emitted when a nav button is clicked (page index)
-    page_changed   = pyqtSignal(int)
-    voice_toggled  = pyqtSignal(bool)
-    silent_toggled = pyqtSignal(bool)
-    theme_changed  = pyqtSignal(str)
-    mic_pressed    = pyqtSignal()   # STT mic button
+class Sidebar(QWidget):
+    # Signals
+    nav_clicked      = pyqtSignal(str)   # page name
+    theme_changed    = pyqtSignal(str)
+    voice_toggled    = pyqtSignal(bool)
+    silent_toggled   = pyqtSignal(bool)
+    mic_pressed      = pyqtSignal()
+    PAGES = [
+        ("💬", "Chat",      "chat"),
+        ("⌨️",  "Terminal",  "terminal"),
+        ("📋", "Timeline",  "timeline"),
+        ("⚠️",  "Warnings",  "warnings"),
+        ("🧬", "Self-Mod",  "selfmod"),
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("sidebar")
-        self.setFixedWidth(230)
+        self.setObjectName("Sidebar")
+        self.setFixedWidth(200)
 
-        self._voice_on  = False
-        self._silent_on = False
+        self._nav_buttons: dict = {}
+        self._active_page = "chat"
+        self._warning_count = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
         # Logo
-        logo_frame = QFrame()
-        logo_frame.setObjectName("logoFrame")
-        logo_frame.setFixedHeight(72)
-        logo_lyt = QVBoxLayout(logo_frame)
-        logo_lyt.setContentsMargins(20, 0, 0, 0)
-        logo_lyt.setAlignment(Qt.AlignVCenter)
-        logo_lbl = QLabel("◈  ARIA")
-        logo_lbl.setObjectName("logoLabel")
-        logo_lbl.setFont(QFont("Consolas", 15, QFont.Bold))
-        logo_lyt.addWidget(logo_lbl)
-        layout.addWidget(logo_frame)
-        layout.addWidget(self._divider())
-
+        logo = QLabel("ARIA")
+        logo.setObjectName("SidebarLogo")
+        layout.addWidget(logo)
         # Nav buttons
-        self.nav_buttons: dict[str, QPushButton] = {}
-        nav_items = [
-            ("chat_btn",     "●  Chat",     0),
-            ("term_btn",     "■  Terminal", 1),
-            ("timeline_btn", "◉  Timeline", 2),
-            ("warn_btn",     "⚠  Warnings", 3),
-        ]
-        for obj_name, label, idx in nav_items:
-            btn = QPushButton(label)
-            btn.setObjectName("navBtn")
-            btn.setCheckable(True)
-            btn.setFont(QFont("Consolas", 10))
-            btn.setFixedHeight(46)
-            btn.clicked.connect(lambda _checked, i=idx: self.page_changed.emit(i))
+        for icon, label, page in self.PAGES:
+            btn = QPushButton(f"{icon}  {label}")
+            btn.setObjectName("NavBtn")
+            btn.setCheckable(False)
+            btn.clicked.connect(lambda _, p=page: self._on_nav(p))
             layout.addWidget(btn)
-            self.nav_buttons[obj_name] = btn
+            self._nav_buttons[page] = btn
+        # Badge overlay for warnings (created after button)
+        self._warn_btn = self._nav_buttons["warnings"]
+
+        self._set_active("chat")
+
+        sep1 = self._separator()
+        layout.addWidget(sep1)
+        # System info
+        self._sys_label = QLabel("Loading...")
+        self._sys_label.setObjectName("SysInfo")
+        self._sys_label.setWordWrap(True)
+        layout.addWidget(self._sys_label)
+
+        sep2 = self._separator()
+        layout.addWidget(sep2)
+        # Voice toggle
+        self._voice_btn = QPushButton("🔊  Voice ON")
+        self._voice_btn.setObjectName("ToggleBtn")
+        self._voice_btn.setCheckable(True)
+        self._voice_btn.setChecked(True)
+        self._voice_btn.clicked.connect(self._on_voice_toggle)
+        layout.addWidget(self._voice_btn)
+        # Silent mode toggle
+        self._silent_btn = QPushButton("🤫  Silent OFF")
+        self._silent_btn.setObjectName("ToggleBtn")
+        self._silent_btn.setCheckable(True)
+        self._silent_btn.setChecked(False)
+        self._silent_btn.clicked.connect(self._on_silent_toggle)
+        layout.addWidget(self._silent_btn)
+        # Mic button
+        self._mic_btn = QPushButton("🎤  Hold to Speak")
+        self._mic_btn.setObjectName("MicBtn")
+        self._mic_btn.pressed.connect(self._on_mic_press)
+        layout.addWidget(self._mic_btn)
+
+        sep3 = self._separator()
+        layout.addWidget(sep3)
+        # Theme selector
+        theme_label = QLabel("Theme")
+        theme_label.setObjectName("SysInfo")
+        theme_label.setContentsMargins(16, 4, 0, 0)
+        layout.addWidget(theme_label)
+
+        self._theme_combo = QComboBox()
+        self._theme_combo.setObjectName("ThemeCombo")
+        self._theme_combo.addItems(list(THEMES.keys()))
+        self._theme_combo.currentTextChanged.connect(self.theme_changed)
+        layout.addWidget(self._theme_combo)
 
         layout.addStretch()
-        layout.addWidget(self._divider())
+        # Update system info every 30s
+        self._sys_timer = QTimer(self)
+        self._sys_timer.setInterval(30_000)
+        self._sys_timer.timeout.connect(self._update_sysinfo)
+        self._sys_timer.start()
+        self._update_sysinfo()
+    # Nav
+    def _on_nav(self, page: str):
+        self._set_active(page)
+        self.nav_clicked.emit(page)
 
-        # Health label 
-        self.health_label = QLabel("● System OK")
-        self.health_label.setObjectName("healthLabel")
-        self.health_label.setFont(QFont("Consolas", 8))
-        self.health_label.setContentsMargins(16, 6, 10, 0)
-        layout.addWidget(self.health_label)
+    def _set_active(self, page: str):
+        self._active_page = page
+        for p, btn in self._nav_buttons.items():
+            btn.setObjectName("NavBtnActive" if p == page else "NavBtn")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+    # Warning badge
+    def set_warning_count(self, count: int):
+        self._warning_count = count
+        label = "⚠️  Warnings"
+        if count > 0: label += f" ({count})"
+        self._warn_btn.setText(label)
+    # Toggles
+    def _on_voice_toggle(self):
+        on = self._voice_btn.isChecked()
+        self._voice_btn.setText("🔊  Voice ON" if on else "🔇  Voice OFF")
+        self.voice_toggled.emit(on)
 
-        # System info as ListWidget 
-        self.sys_list = QListWidget()
-        self.sys_list.setObjectName("sysListWidget")
-        self.sys_list.setFixedHeight(72)          # shows ~4 rows
-        self.sys_list.setFocusPolicy(Qt.NoFocus)
-        self.sys_list.setSelectionMode(QListWidget.NoSelection)
-        self.sys_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.sys_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._add_sys_row("Loading system info…")
-        layout.addWidget(self.sys_list)
+    def _on_silent_toggle(self):
+        on = self._silent_btn.isChecked()
+        self._silent_btn.setText("🤫  Silent ON" if on else "🤫  Silent OFF")
+        self.silent_toggled.emit(on)
 
-        # Voice toggles 
-        self.voice_btn = QPushButton("  ○  Voice  OFF")
-        self.voice_btn.setObjectName("voiceBtn")
-        self.voice_btn.setFont(QFont("Consolas", 9, QFont.Bold))
-        self.voice_btn.setFixedHeight(38)
-        self.voice_btn.clicked.connect(self._on_voice)
-        layout.addWidget(self.voice_btn)
-
-        self.silent_btn = QPushButton("  ○  Silent Voice  OFF")
-        self.silent_btn.setObjectName("voiceBtn")
-        self.silent_btn.setFont(QFont("Consolas", 9))
-        self.silent_btn.setFixedHeight(34)
-        self.silent_btn.clicked.connect(self._on_silent)
-        layout.addWidget(self.silent_btn)
-
-        # Theme row
-        theme_row = QHBoxLayout()
-        theme_row.setContentsMargins(12, 4, 12, 0)
-        theme_row.setSpacing(4)
-        for name in THEMES:
-            tb = QPushButton(name.capitalize())
-            tb.setObjectName("themeBtn")
-            tb.setFont(QFont("Consolas", 7))
-            tb.setFixedHeight(24)
-            tb.clicked.connect(lambda _c, n=name: self.theme_changed.emit(n))
-            theme_row.addWidget(tb)
-        layout.addLayout(theme_row)
-        layout.addSpacing(6)
-
-        # Mic button (STT)
-        self.mic_btn = QPushButton("  ◎  Hold to Speak")
-        self.mic_btn.setObjectName("micBtn")
-        self.mic_btn.setFont(QFont("Consolas", 9))
-        self.mic_btn.setFixedHeight(34)
-        self.mic_btn.setCheckable(True)
-        self.mic_btn.clicked.connect(self._on_mic)
-        layout.addWidget(self.mic_btn)
-        layout.addSpacing(10)
-
-    # Public helpers
-    def set_active_page(self, index: int):
-        for i, key in enumerate(self.nav_buttons):
-            self.nav_buttons[key].setChecked(i == index)
-
-    def update_sys_info(self, rows: list[str]):
-        self.sys_list.clear()
-        for row in rows:
-            self._add_sys_row(row)
-
-    def set_health(self, message: str, color: str):
-        self.health_label.setText(message)
-        self.health_label.setStyleSheet(f"color: {color};")
-
-    # Private
-    def _add_sys_row(self, text: str):
-        from PyQt5.QtWidgets import QListWidgetItem
-        item = QListWidgetItem(text)
-        item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-        self.sys_list.addItem(item)
-
-    @staticmethod
-    def _divider() -> QFrame:
-        d = QFrame()
-        d.setObjectName("divider")
-        d.setFixedHeight(1)
-        return d
-
-    def _on_voice(self):
-        self._voice_on = not self._voice_on
-        dot = "●" if self._voice_on else "○"
-        state = "ON" if self._voice_on else "OFF"
-        self.voice_btn.setText(f"  {dot}  Voice  {state}")
-        self.voice_toggled.emit(self._voice_on)
-
-    def _on_silent(self):
-        self._silent_on = not self._silent_on
-        dot = "●" if self._silent_on else "○"
-        state = "ON" if self._silent_on else "OFF"
-        self.silent_btn.setText(f"  {dot}  Silent Voice  {state}")
-        self.silent_toggled.emit(self._silent_on)
-
-    def _on_mic(self):
-        if self.mic_btn.isChecked():
-            self.mic_btn.setText("  ◉  Recording…  ")
-            self.mic_btn.setStyleSheet("color: #ff5252;")
-        else:
-            self.mic_btn.setText("  ◎  Hold to Speak")
-            self.mic_btn.setStyleSheet("")
+    def _on_mic_press(self):
+        self._mic_btn.setObjectName("MicBtnActive")
+        self._mic_btn.style().unpolish(self._mic_btn)
+        self._mic_btn.style().polish(self._mic_btn)
+        self._mic_btn.setText("🔴  Recording...")
         self.mic_pressed.emit()
+        # Reset button after 6s (recording duration)
+        QTimer.singleShot(6200, self._reset_mic_btn)
 
-    def set_warning_badge(self, count: int):
-        btn = self.nav_buttons.get("warn_btn")
-        if not btn:
-            return
-        label = f"⚠  Warnings  [{count}]" if count else "⚠  Warnings"
-        btn.setText(label)
+    def _reset_mic_btn(self):
+        self._mic_btn.setObjectName("MicBtn")
+        self._mic_btn.style().unpolish(self._mic_btn)
+        self._mic_btn.style().polish(self._mic_btn)
+        self._mic_btn.setText("🎤  Hold to Speak")
+
+    def apply_selfmod(self, voice_on: bool, silent_on: bool):
+        self._voice_btn.setChecked(voice_on)
+        self._voice_btn.setText("🔊  Voice ON" if voice_on else "🔇  Voice OFF")
+        self._silent_btn.setChecked(silent_on)
+        self._silent_btn.setText("🤫  Silent ON" if silent_on else "🤫  Silent OFF")
+    # System Info
+    def _update_sysinfo(self):
+        try:
+            cpu = psutil.cpu_percent(interval=None)
+            mem = psutil.virtual_memory()
+            self._sys_label.setText(
+                f"CPU: {cpu:.0f}%\n"
+                f"RAM: {mem.percent:.0f}% ({mem.used // (1024**3)}/{mem.total // (1024**3)} GB)"
+            )
+        except Exception: self._sys_label.setText("System info unavailable")
+    # Helpers
+    def _separator(self) -> QFrame:
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        sep.setContentsMargins(8, 4, 8, 4)
+        return sep

@@ -1,147 +1,115 @@
-import re, threading, queue, tempfile, os
-import pyttsx3
-# faster-whisper for STT
+import threading
+import numpy as np
+from typing import Optional
 try:
-    from faster_whisper import WhisperModel
-    HAS_WHISPER = True
-except ImportError:
-    HAS_WHISPER = False
-# sounddevice + soundfile for mic recording
+    import pyttsx3
+    TTS_AVAILABLE = True
+except ImportError: TTS_AVAILABLE = False
 try:
     import sounddevice as sd
     import soundfile as sf
-    import numpy as np
-    HAS_AUDIO = True
-except ImportError:
-    HAS_AUDIO = False
-
+    from faster_whisper import WhisperModel
+    STT_AVAILABLE = True
+except ImportError: STT_AVAILABLE = False
 
 class VoiceEngine:
+    def __init__(self, signals):
+        self._signals    = signals
+        self._tts_engine = None
+        self._whisper    = None
+        self._recording  = False
+        self._tts_lock   = threading.Lock()
+        self._silent_mode = False
+
+        self._init_tts()
+    # Init
+    def _init_tts(self):
+        if not TTS_AVAILABLE: return
+        try:
+            self._tts_engine = pyttsx3.init()
+            self._tts_engine.setProperty("rate", 175)
+            self._tts_engine.setProperty("volume", 0.9)
+            # Prefer a female voice if available
+            voices = self._tts_engine.getProperty("voices")
+            for v in voices:
+                if "zira" in v.name.lower() or "female" in v.name.lower():
+                    self._tts_engine.setProperty("voice", v.id)
+                    break
+        except Exception as e:
+            print(f"[TTS] Init failed: {e}")
+            self._tts_engine = None
+
+    def _ensure_whisper(self):
+        if self._whisper is not None or not STT_AVAILABLE:
+            return
+        try:
+            self._whisper = WhisperModel("tiny", device="cpu", compute_type="int8")
+        except Exception as e:
+            print(f"[STT] Whisper load failed: {e}")
+            self._whisper = None
+
     # TTS
-    def __init__(self):
-        # TTS engine
-        self._tts = pyttsx3.init()
-        self._tts.setProperty("rate", 180)
-        self._tts.setProperty("volume", 0.9)
-        voices = self._tts.getProperty("voices")
-        if len(voices) > 1:
-            self._tts.setProperty("voice", voices[1].id)
-        self._tts_lock = threading.Lock()
+    def set_silent_mode(self, enabled: bool): self._silent_mode = enabled
 
-        # STT model (lazy-loaded on first use to keep startup fast)
-        self._whisper = None
-        self._whisper_lock = threading.Lock()
+    def speak(self, text: str, force: bool = False):
+        if not self._tts_engine: return
+        if self._silent_mode and not force: return
 
-        # Recording state
-        self._recording   = False
-        self._rec_thread  = None
-        self._audio_queue = queue.Queue()
-
-    def speak(
-        self,
-        text: str,
-        force: bool = False,
-        mode: str = "chat",
-        silent_mode: bool = False,
-    ):
-        if silent_mode and not force:
-            speak_modes = {"error", "warning", "confirmation"}
-            should_speak = mode in speak_modes or text.startswith(("❌", "⚠️", "✅"))
-            if not should_speak:
-                return
-
-        clean = re.sub(r"[*`#_~]", "", text)
-        clean = re.sub(r"<[^>]+>", "", clean)[:300]
-
-        def _speak():
+        def _run():
             with self._tts_lock:
-                self._tts.say(clean)
-                self._tts.runAndWait()
-
-        threading.Thread(target=_speak, daemon=True).start()
-
-    # STT
-    def _load_whisper(self) -> bool:
-        if not HAS_WHISPER:
-            return False
-        with self._whisper_lock:
-            if self._whisper is None:
                 try:
-                    # "tiny" is fast on CPU; switch to "base" for better accuracy
-                    self._whisper = WhisperModel("tiny", device="cpu", compute_type="int8")
-                except Exception:
-                    return False
-        return True
+                    self._signals.tts_speaking.emit(True)
+                    # Strip markdown
+                    import re
+                    clean = re.sub(r"[*_`#\[\]()]", "", text)
+                    clean = re.sub(r"https?://\S+", "link", clean)
+                    self._tts_engine.say(clean[:500])
+                    self._tts_engine.runAndWait()
+                except Exception as e: print(f"[TTS] Speak error: {e}")
+                finally: self._signals.tts_speaking.emit(False)
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+    def stop_speaking(self):
+        if self._tts_engine:
+            try: self._tts_engine.stop()
+            except Exception: pass
+    # STT
+    @property
+    def stt_available(self) -> bool: return STT_AVAILABLE
+
+    def record_and_transcribe(self, duration: int = 5, sample_rate: int = 16000):
+        if not self.stt_available:
+            self._signals.stt_error.emit("STT not available (faster-whisper not installed)")
+            return
+        self._ensure_whisper()
+        if not self._whisper:
+            self._signals.stt_error.emit("STT model failed to load")
+            return
+        def _run():
+            try:
+                self._signals.stt_started.emit()
+                self._recording = True
+                audio = sd.rec(
+                    int(duration * sample_rate),
+                    samplerate=sample_rate,
+                    channels=1,
+                    dtype="float32",
+                )
+                sd.wait()
+                self._recording = False
+                audio_np = audio.flatten()
+
+                segments, _ = self._whisper.transcribe(audio_np, language="en")
+                text = " ".join(s.text.strip() for s in segments).strip()
+
+                if text: self._signals.stt_result.emit(text)
+                else: self._signals.stt_error.emit("No speech detected.")
+            except Exception as e:
+                self._recording = False
+                self._signals.stt_error.emit(f"STT Error: {e}")
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
 
     @property
-    def stt_available(self) -> bool:
-        return HAS_WHISPER and HAS_AUDIO
-
-    def start_recording(self) -> bool:
-        if not HAS_AUDIO:
-            return False
-        if self._recording:
-            return True
-        self._recording   = True
-        self._audio_queue = queue.Queue()
-
-        def _record():
-            RATE   = 16_000
-            CHUNK  = 1024
-            frames = []
-
-            def callback(indata, _frames, _time, _status):
-                if self._recording:
-                    frames.append(indata.copy())
-
-            with sd.InputStream(samplerate=RATE, channels=1, dtype="float32",
-                                blocksize=CHUNK, callback=callback):
-                while self._recording:
-                    sd.sleep(100)
-
-            if frames:
-                audio = np.concatenate(frames, axis=0)
-                self._audio_queue.put((audio, RATE))
-
-        self._rec_thread = threading.Thread(target=_record, daemon=True)
-        self._rec_thread.start()
-        return True
-
-    def stop_recording_and_transcribe(self, on_result, on_error=None):
-        self._recording = False
-        if self._rec_thread:
-            self._rec_thread.join(timeout=3)
-            self._rec_thread = None
-
-        def _transcribe():
-            try:
-                audio, rate = self._audio_queue.get(timeout=5)
-            except queue.Empty:
-                if on_error:
-                    on_error("No audio captured.")
-                return
-
-            if not self._load_whisper():
-                if on_error:
-                    on_error("Whisper unavailable — run: pip install faster-whisper sounddevice soundfile numpy")
-                return
-
-            try:
-                tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                sf.write(tmp.name, audio, rate)
-                tmp.close()
-
-                segments, _info = self._whisper.transcribe(tmp.name, language="en")
-                text = " ".join(s.text.strip() for s in segments).strip()
-                os.unlink(tmp.name)
-
-                if text:
-                    on_result(text)
-                else:
-                    if on_error:
-                        on_error("Nothing detected — try speaking louder.")
-            except Exception as e:
-                if on_error:
-                    on_error(f"Transcription failed: {e}")
-
-        threading.Thread(target=_transcribe, daemon=True).start()
+    def is_recording(self) -> bool: return self._recording

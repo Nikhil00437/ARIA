@@ -1,0 +1,11 @@
+Starting ARIA...
+QApplication created
+[DEBUG] __init__ start
+[DEBUG] super init done
+[DEBUG] signals created
+[DEBUG] database created
+[DEBUG] llm created
+[DEBUG] VoiceEngine init start
+[DEBUG] TTS_AVAILABLE=True, STT_AVAILABLE=True
+[DEBUG] _init_tts done
+[DEBUG] Loading WhisperModel...

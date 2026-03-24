@@ -1,374 +1,351 @@
-import os, base64, threading
-from datetime import datetime
-from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFrame, QLabel, QPushButton, QStackedWidget
-from PyQt5.QtCore import Qt, QTimer, QByteArray, QBuffer
-from PyQt5.QtGui import QFont, QPixmap
-from constants import THEMES
+import uuid, threading
+from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QApplication
+from PyQt5.QtCore import Qt, QTimer, pyqtSlot
+from constants import DEFAULT_THEME, CHAT_MODEL, THEMES
+from signals import ARIASignals, HealthMonitor
+from database import Database
+from llm_client import LLMClient
+from voice_engine import VoiceEngine
+from chat_engine import ChatEngine
 from styles import build_stylesheet
+from title import TitleBar
 from sidebar import Sidebar
 from pages import ChatPage, TerminalPage, TimelinePage, WarningsPage
-from signals import SignalBridge, HealthMonitor
-from voice_engine import VoiceEngine
-from chat_engine import chat_with_llm
-from database import log_command, save_session_messages
-from extract import execute_command, get_system_snapshot, requires_confirmation
-from image_generation_try import ImageGenerator
-from title import TitleBar
+from selfmod_page import SelfModPage
+from selfmod import SelfModController
+from widgets import StatusBar
 
 class ARIAWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
-        self.title_bar = TitleBar(self)
-        self.setGeometry(200, 100, 1400, 850)
-        # State
-        self.session_id          = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.history: list       = []
-        self.voice_enabled       = False
-        self.silent_voice_mode   = False
-        self.output_mode         = "verbose"
-        self.current_theme       = "cyber"
-        self.pending_command     = None
-        self.last_search_results: list = []
-        self._mic_active         = False       # STT recording state
-        self._unread_warnings    = 0           # badge counter
-        # Services
-        self.voice_engine = VoiceEngine()
-        self.image_gen    = ImageGenerator()
-        # Signal bridge
-        self.bridge = SignalBridge()
-        self.bridge.message_signal.connect(self._on_message)
-        self.bridge.suggestion_signal.connect(self._on_suggestions)
-        self.bridge.timeline_signal.connect(self._on_timeline)
-        self.bridge.image_signal.connect(self._on_image)
-        self.bridge.stt_result_signal.connect(self._on_stt_result)
-        self.bridge.stt_error_signal.connect(self._on_stt_error)
-        self.bridge.warning_signal.connect(self._on_warning_page)
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setMinimumSize(1100, 700)
+        self.resize(1280, 800)
+        # Core systems
+        self._signals       = ARIASignals()
+        self._db            = Database()
+        self._llm           = LLMClient()
+        self._session_id    = str(uuid.uuid4())
+        self._history: list = []
+        self._current_theme = DEFAULT_THEME
+        # Self-Mod system
+        self._selfmod: SelfModController = None   # initialized after DB connects
+        # Voice
+        self._voice = VoiceEngine(self._signals)
+        # Chat engine (wired after selfmod)
+        self._engine: ChatEngine = None
         # Health monitor
-        self.health_monitor = HealthMonitor(interval_ms=300_000)
-        self.health_monitor.alert_signal.connect(self._on_health_alert)
-        self.health_monitor.start()
+        self._health = HealthMonitor(self._signals)
+        # Build UI
         self._build_ui()
-        self.apply_theme()
-        QTimer.singleShot(1000, self._update_sys_info)
-
-    # UI
+        self._connect_signals()
+        self._apply_theme(DEFAULT_THEME)
+        # Boot sequence
+        QTimer.singleShot(100, self._boot)
+    # UI Construction
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
-        root = QHBoxLayout(central)
+        root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        # Sidebar
-        self.sidebar = Sidebar()
-        self.sidebar.page_changed.connect(self._switch_page)
-        self.sidebar.voice_toggled.connect(self._on_voice_toggled)
-        self.sidebar.silent_toggled.connect(self._on_silent_toggled)
-        self.sidebar.theme_changed.connect(self.apply_theme)
-        self.sidebar.mic_pressed.connect(self._on_mic_pressed)
-        root.addWidget(self.sidebar)
-        # Main area
-        main_area = QFrame()
-        main_area.setObjectName("mainArea")
-        main_lyt = QVBoxLayout(main_area)
-        main_lyt.setContentsMargins(0, 0, 0, 0)
-        main_lyt.setSpacing(0)
-        # Top bar
-        top_bar = QFrame()
-        top_bar.setObjectName("topBar")
-        top_bar.setFixedHeight(52)
-        top_bar_lyt = QHBoxLayout(top_bar)
-        top_bar_lyt.setContentsMargins(24, 0, 24, 0)
+        # Title bar
+        self._title_bar = TitleBar(self)
+        root.addWidget(self._title_bar)
+        # Body: sidebar + page stack
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
 
-        self.page_title = QLabel("Chat")
-        self.page_title.setObjectName("pageTitle")
-        self.page_title.setFont(QFont("Consolas", 11, QFont.Bold))
-        top_bar_lyt.addWidget(self.page_title)
-        top_bar_lyt.addStretch()
+        self._sidebar = Sidebar()
+        body.addWidget(self._sidebar)
 
-        self.mode_btn = QPushButton("MODE: VERBOSE")
-        self.mode_btn.setObjectName("modeBtn")
-        self.mode_btn.setFont(QFont("Consolas", 8))
-        self.mode_btn.setFixedHeight(28)
-        self.mode_btn.clicked.connect(self._toggle_output_mode)
-        top_bar_lyt.addWidget(self.mode_btn)
-        top_bar_lyt.addSpacing(16)
+        self._stack = QStackedWidget()
 
-        self.confidence_label = QLabel("conf: –")
-        self.confidence_label.setObjectName("confidenceLabel")
-        self.confidence_label.setFont(QFont("Consolas", 8))
-        top_bar_lyt.addWidget(self.confidence_label)
-        top_bar_lyt.addSpacing(16)
+        self._chat_page     = ChatPage()
+        self._terminal_page = TerminalPage()
+        self._timeline_page = TimelinePage()
+        self._warnings_page = WarningsPage()
+        self._selfmod_page  = SelfModPage()
 
-        status_dot = QLabel("●  Online")
-        status_dot.setObjectName("statusDot")
-        status_dot.setFont(QFont("Consolas", 8))
-        top_bar_lyt.addWidget(status_dot)
+        self._pages = {
+            "chat":     self._chat_page,
+            "terminal": self._terminal_page,
+            "timeline": self._timeline_page,
+            "warnings": self._warnings_page,
+            "selfmod":  self._selfmod_page,
+        }
+        for page in self._pages.values(): self._stack.addWidget(page)
 
-        main_lyt.addWidget(top_bar)
+        body.addWidget(self._stack, 1)
 
-        accent_line = QFrame()
-        accent_line.setObjectName("accentLine")
-        accent_line.setFixedHeight(2)
-        main_lyt.addWidget(accent_line)
-        # Pages
-        self.nav_stack = QStackedWidget()
+        body_widget = QWidget()
+        body_widget.setLayout(body)
+        root.addWidget(body_widget, 1)
+        # Status bar
+        self._status_bar = StatusBar()
+        root.addWidget(self._status_bar)
+    # Signal Connections
+    def _connect_signals(self):
+        s = self._signals
+        # Navigation
+        self._sidebar.nav_clicked.connect(self._navigate)
+        self._sidebar.theme_changed.connect(self._apply_theme)
+        self._sidebar.voice_toggled.connect(self._on_voice_toggle)
+        self._sidebar.silent_toggled.connect(self._on_silent_toggle)
+        self._sidebar.mic_pressed.connect(self._on_mic_press)
+        # Chat page
+        self._chat_page.message_submitted.connect(self._on_user_message)
+        self._chat_page.suggestion_clicked.connect(self._on_user_message)
+        self._terminal_page.command_submitted.connect(self._on_terminal_command)
+        # ARIA signals → UI
+        s.chat_response.connect(self._on_chat_response)
+        s.chat_stream_chunk.connect(self._chat_page._stream_chunk)
+        s.chat_stream_done.connect(self._chat_page._end_stream_bubble)
+        s.typing_indicator.connect(self._chat_page.set_typing)
+        s.status_update.connect(self._status_bar.set_status)
+        s.terminal_output.connect(self._terminal_page.append_output)
+        s.timeline_event.connect(self._timeline_page.add_event)
+        s.warning_added.connect(self._warnings_page.add_warning)
+        s.stt_started.connect(lambda: self._chat_page.set_stt_status("🔴 Recording..."))
+        s.stt_result.connect(self._on_stt_result)
+        s.stt_error.connect(lambda e: self._chat_page.set_stt_status(f"STT: {e}"))
+        s.theme_changed.connect(self._apply_theme)
+        # Self-Mod signals
+        s.selfmod_proposal.connect(self._on_selfmod_proposals)
+        s.selfmod_applied.connect(self._on_selfmod_applied)
+        s.selfmod_rolled_back.connect(self._on_selfmod_rolled_back)
+        # Warnings count → sidebar badge
+        self._warnings_page.count_changed.connect(self._sidebar.set_warning_count)
+        # Self-mod page actions
+        self._selfmod_page.approved.connect(self._on_proposal_approved)
+        self._selfmod_page.rejected.connect(self._on_proposal_rejected)
+        self._selfmod_page.rollback.connect(self._on_rollback)
+        self._selfmod_page.analyze.connect(self._on_analyze_now)
+        # Session management
+        s.session_loaded.connect(self._on_session_loaded)
+    # Boot Sequence
+    def _boot(self):
+        self._status_bar.set_status("Connecting to MongoDB...")
 
-        self.chat_page     = ChatPage()
-        self.terminal_page = TerminalPage()
-        self.timeline_page = TimelinePage()
-        self.warnings_page = WarningsPage()
-
-        self.chat_page.message_submitted.connect(self._send_message)
-        self.chat_page.quick_action.connect(
-            lambda cmd: (self.chat_page.input_field.setText(cmd), self._send_message(cmd))
-        )
-        self.terminal_page.command_submitted.connect(self._run_terminal_command)
-        self.terminal_page.export_requested.connect(self._export_terminal)
-        self.warnings_page.cleared.connect(lambda: self._reset_warning_badge())
-
-        self.nav_stack.addWidget(self.chat_page)      # 0
-        self.nav_stack.addWidget(self.terminal_page)  # 1
-        self.nav_stack.addWidget(self.timeline_page)  # 2
-        self.nav_stack.addWidget(self.warnings_page)  # 3
-
-        main_lyt.addWidget(self.nav_stack)
-        root.addWidget(main_area, stretch=1)
-
-        self._switch_page(0)
-
-    # Page switching
-    def _switch_page(self, index: int):
-        self.nav_stack.setCurrentIndex(index)
-        titles = {0: "Chat", 1: "Terminal", 2: "Timeline", 3: "Warnings"}
-        self.page_title.setText(titles.get(index, ""))
-        self.sidebar.set_active_page(index)
-        # Clear badge when user navigates to warnings page
-        if index == 3:
-            self._unread_warnings = 0
-            self.sidebar.set_warning_badge(0)
-
-    # Theme
-    def apply_theme(self, name: str = None):
-        if name:
-            self.current_theme = name
-        self.setStyleSheet(build_stylesheet(THEMES[self.current_theme]))
-
-    def _theme(self) -> dict:
-        return THEMES[self.current_theme]
-
-    # System info
-    def _update_sys_info(self):
-        try:
-            info     = get_system_snapshot()
-            caption  = info.get("Caption", "Windows")
-            hostname = info.get("Hostname", "Unknown")
-            rows = [
-                f"Host: {hostname}",
-                f"OS:   {caption}",
-            ]
-            # Try to pull a couple more fields if available
-            for key in ("TotalVisibleMemorySize", "FreePhysicalMemory"):
-                val = info.get(key)
-                if val:
-                    label = "RAM Total" if "Total" in key else "RAM Free"
-                    try:
-                        mb = int(val) // 1024
-                        rows.append(f"{label}: {mb} MB")
-                    except Exception:
-                        rows.append(f"{label}: {val}")
-        except Exception:
-            rows = ["System info", "unavailable"]
-        self.sidebar.update_sys_info(rows)
-
-    # Signal handlers
-    def _on_message(self, role: str, content: str, mode: str):
-        self.chat_page.append_message(role, content, mode, self._theme())
-
-    def _on_suggestions(self, suggestions: list):
-        self.chat_page.show_suggestions(suggestions)
-
-    def _on_timeline(self, timestamp: str, action: str, status: str):
-        self.timeline_page.add_entry(timestamp, action, status, self._theme()["dim"])
-
-    def _on_image(self, path: str):
-        try:
-            pixmap = QPixmap(path)
-            if pixmap.isNull():
-                self.chat_page.append_message("system", f"⚠️ Could not load image: {path}", "system", self._theme())
-                return
-            pixmap = pixmap.scaledToWidth(400, Qt.SmoothTransformation)
-            ba = QByteArray()
-            buf = QBuffer(ba)
-            buf.open(QBuffer.WriteOnly)
-            pixmap.save(buf, "PNG")
-            b64 = base64.b64encode(ba.data()).decode()
-            self.chat_page.show_image(b64, self._theme()["border"])
-        except Exception as e:
-            self.chat_page.append_message("system", f"⚠️ Could not display image: {e}", "system", self._theme())
-
-    def _on_health_alert(self, message: str, severity: str):
-        color = "#ffcc00" if severity == "warning" else "#ff5252"
-        self.sidebar.set_health(message, color)
-        # Route to Warnings page — not chat
-        self.bridge.warning_signal.emit(message, severity)
-        if self.voice_enabled:
-            self.voice_engine.speak(message, force=True)
-
-    # Voice controls
-    def _on_voice_toggled(self, enabled: bool):
-        self.voice_enabled = enabled
-        if enabled:
-            self.voice_engine.speak("Voice enabled", force=True)
-
-    def _on_silent_toggled(self, enabled: bool):
-        self.silent_voice_mode = enabled
-
-    # STT handlers
-    def _on_mic_pressed(self):
-        if not self._mic_active:
-            # Start recording
-            ok = self.voice_engine.start_recording()
-            if not ok:
-                self.chat_page.set_stt_status(
-                    "⚠ Audio libs missing — pip install sounddevice soundfile numpy", "#f44336"
-                )
-                # Uncheck the button visually
-                self.sidebar.mic_btn.setChecked(False)
-                self.sidebar.mic_btn.setText("  ◎  Hold to Speak")
-                self.sidebar.mic_btn.setStyleSheet("")
-                return
-            self._mic_active = True
-            self.chat_page.set_stt_status("  ◉  Recording…  press mic again to stop", "#ff5252")
+        db_ok = self._db.connect()
+        if db_ok:
+            self._status_bar.set_status("MongoDB connected.")
+            self._signals.warning_added.emit("info", "MongoDB connected successfully.")
         else:
-            # Stop and transcribe
-            self._mic_active = False
-            self.chat_page.set_stt_status("  ◌  Transcribing…", "#ffcc00")
-            self.voice_engine.stop_recording_and_transcribe(
-                on_result=lambda text: self.bridge.stt_result_signal.emit(text),
-                on_error=lambda msg:   self.bridge.stt_error_signal.emit(msg),
-            )
-
-    def _on_stt_result(self, text: str):
-        self.chat_page.set_stt_status("")
-        self.chat_page.set_input_text(text)
-        # Reset mic button state
-        self.sidebar.mic_btn.setChecked(False)
-        self.sidebar.mic_btn.setText("  ◎  Hold to Speak")
-        self.sidebar.mic_btn.setStyleSheet("")
-
-    def _on_stt_error(self, msg: str):
-        self.chat_page.set_stt_status(f"⚠ {msg}", "#f44336")
-        self.sidebar.mic_btn.setChecked(False)
-        self.sidebar.mic_btn.setText("  ◎  Hold to Speak")
-        self.sidebar.mic_btn.setStyleSheet("")
-
-    # Warnings page handler
-    def _on_warning_page(self, message: str, severity: str):
-        self.warnings_page.add_warning(message, severity)
-        # Increment badge only if user isn't on the warnings page right now
-        if self.nav_stack.currentIndex() != 3:
-            self._unread_warnings += 1
-            self.sidebar.set_warning_badge(self._unread_warnings)
-
-    def _reset_warning_badge(self):
-        self._unread_warnings = 0
-        self.sidebar.set_warning_badge(0)
-
-    # Output mode
-    def _toggle_output_mode(self):
-        self.output_mode = "summary" if self.output_mode == "verbose" else "verbose"
-        self.mode_btn.setText(f"MODE: {self.output_mode.upper()}")
-
-    # Confidence display
-    def _update_confidence(self, val: float):
-        color = "#4caf50" if val >= 0.80 else ("#ffcc00" if val >= 0.60 else "#f44336")
-        self.confidence_label.setStyleSheet(f"color: {color};")
-        self.confidence_label.setText(f"conf: {val:.2f}")
-
-    # Chat message flow
-    def _send_message(self, message: str = None):
-        if message is None: return
-        message = message.strip()
-        if not message: return
-        self.chat_page.append_message("user", message, "chat", self._theme())
-        self.history.append({"role": "user", "content": message})
-
-        def process():
-            try:
-                result = chat_with_llm(
-                    message,
-                    self.session_id,
-                    self.history,
-                    output_mode=self.output_mode,
-                    pending_command=self.pending_command,
-                    last_search_results=self.last_search_results or None,
-                )
-                mode    = result["mode"]
-                content = result["content"]
-                conf    = result.get("confidence_val", 0.0)
-
-                QTimer.singleShot(0, lambda: self._update_confidence(conf))
-
-                if result.get("needs_confirmation"):
-                    self.pending_command = result.get("pending_command")
-                elif result.get("clear_pending") or not result.get("needs_confirmation"):
-                    self.pending_command = None
-
-                if result.get("search_results"):
-                    self.last_search_results = result["search_results"]
-
-                if result.get("raw_output") and mode == "command":
-                    content = f"Command: {result['action']}\n\n{result['raw_output']}\n\n{content}"
-
-                self.history.append({"role": "assistant", "content": content})
-                self.bridge.message_signal.emit("assistant", content, mode)
-
-                if result.get("image_path"):
-                    self.bridge.image_signal.emit(result["image_path"])
-                ts           = datetime.now().strftime("%H:%M:%S")
-                status       = "ok" if not content.startswith(("❌", "⛔", "⚠")) else "error"
-                action_label = result.get("action") or mode
-                self.bridge.timeline_signal.emit(ts, str(action_label)[:60], status)
-
-                if self.voice_enabled:
-                    self.voice_engine.speak(content, mode=mode, silent_mode=self.silent_voice_mode)
-                save_session_messages(self.session_id, message, content, mode)
-            except Exception as e:
-                self.bridge.message_signal.emit("system", f"Error: {e}", "error")
-        threading.Thread(target=process, daemon=True).start()
-
-    # Terminal
-    def _run_terminal_command(self, command: str):
-        if not command.strip(): return
-        t = self._theme()
-        self.bridge.timeline_signal.emit(datetime.now().strftime("%H:%M:%S"), command[:60], "ok")
-
-        def execute():
-            try:
-                needs = requires_confirmation(command)
-                if needs:
-                    self.terminal_page.append_warning(
-                        f"This will {needs}. Run command in Chat for confirmation flow."
-                    )
-                    return
-                output = execute_command(command, skip_confirmation_check=True)
-                self.terminal_page.append_output(command, output, t["dim"], t["accent"])
-                log_command(self.session_id, command, output, "terminal")
-            except Exception as e:
-                self.terminal_page.append_error(str(e))
-        threading.Thread(target=execute, daemon=True).start()
-
-    def _export_terminal(self):
-        content = self.terminal_page.terminal_display.toPlainText()
-        if not content.strip(): return
-        path = os.path.join(
-            os.path.expanduser("~"), "Desktop",
-            f"ARIA_terminal_{self.session_id}.txt",
+            self._status_bar.set_status("MongoDB offline — history disabled.")
+            self._signals.warning_added.emit("warning", "MongoDB unavailable. Session history disabled.")
+        # Init Self-Mod (works even without DB — degrades gracefully)
+        self._selfmod = SelfModController(self._db, self._llm, self._signals)
+        # Init Chat Engine
+        self._engine = ChatEngine(
+            db=self._db,
+            llm_client=self._llm,
+            signals=self._signals,
+            selfmod_controller=self._selfmod,
+            voice_engine=self._voice,
         )
+        # Apply any selfmod-persisted config
+        self._apply_selfmod_config()
+        # Check LLM connectivity
+        self._status_bar.set_status("Checking LLM...")
+        llm_ok = self._llm.ping()
+        self._status_bar.set_online(llm_ok)
+        if llm_ok:
+            self._status_bar.set_llm(CHAT_MODEL)
+            self._status_bar.set_status("Ready")
+            self._signals.warning_added.emit("info", f"LM Studio connected: {CHAT_MODEL}")
+        else:
+            self._status_bar.set_status("LLM offline — using fallback mode")
+            self._signals.warning_added.emit("warning", "LM Studio not reachable. Start LM Studio and load a model.")
+        # Show initial suggestions
+        self._chat_page.set_suggestions(self._engine.get_suggestions("chat"))
+        # Start health monitor
+        self._health.start()
+        # Greet user
+        self._signals.chat_response.emit("assistant",
+            "Hello! I'm **ARIA** — your local AI assistant.\n\n"
+            "I can run commands, search the web, answer questions, generate images, and more — "
+            "all running locally on your machine.\n\n"
+            "Type `/help` for a list of commands, or just ask me anything."
+        )
+    # Navigation
+    @pyqtSlot(str)
+    def _navigate(self, page: str):
+        if page in self._pages:
+            self._stack.setCurrentWidget(self._pages[page])
+            # Refresh selfmod page when navigated to
+            if page == "selfmod" and self._selfmod: self._refresh_selfmod_page()
+    # User Input
+    @pyqtSlot(str)
+    def _on_user_message(self, text: str):
+        if not text.strip(): return
+        self._chat_page.add_message("user", text)
+        self._db.save_message(self._session_id, "user", text)
+        self._history.append({"role": "user", "content": text})
+
+        self._stream_started = False
+
+        if self._engine: threading.Thread(
+                target=self._engine.process,
+                args=(text, self._session_id, self._history.copy()),
+                daemon=True,
+            ).start()
+
+    @pyqtSlot(str)
+    def _on_terminal_command(self, cmd: str):
+        if self._engine: threading.Thread(
+                target=self._engine._run_command,
+                args=(cmd, self._session_id),
+                daemon=True,
+            ).start()
+    # Session Management
+    @pyqtSlot(str)
+    def _on_session_loaded(self, session_id: str):
+        self._session_id = session_id
+        self._history = self._db.get_messages(session_id, limit=50)
+        self._chat_page.clear_messages()
+        for msg in self._history:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            self._chat_page.add_message(role, content)
+        self._signals.warning_added.emit("info", f"Loaded session {session_id[:8]}...")
+    # Chat Response
+    @pyqtSlot(str, str)
+    def _on_chat_response(self, role: str, content: str):
+        if role == "assistant":
+            self._chat_page.add_message(role, content)
+
+    @pyqtSlot(bool)
+    def _on_typing_indicator(self, active: bool):
+        self._chat_page.set_typing(active)
+    # STT
+    @pyqtSlot()
+    def _on_mic_press(self): self._voice.record_and_transcribe(duration=5)
+    
+    @pyqtSlot(str)
+    def _on_stt_result(self, text: str):
+        self._chat_page.set_stt_status("")
+        self._chat_page.set_input_text(text)
+        # Auto-submit
+        self._on_user_message(text)
+    # Voice Toggles
+    @pyqtSlot(bool)
+    def _on_voice_toggle(self, enabled: bool):
+        # TTS enable/disable — update config via selfmod if possible
+        if self._selfmod:
+            try:
+                cfg = self._selfmod.sandbox.config
+                cfg.apply("tts_enabled", enabled)
+            except Exception: pass
+
+    @pyqtSlot(bool)
+    def _on_silent_toggle(self, enabled: bool):
+        self._voice.set_silent_mode(enabled)
+        if self._selfmod:
+            try:
+                cfg = self._selfmod.sandbox.config
+                cfg.apply("silent_mode", enabled)
+            except Exception: pass
+    # Theme
+    @pyqtSlot(str)
+    def _apply_theme(self, theme_name: str):
+        self._current_theme = theme_name
+        theme = THEMES.get(theme_name, THEMES[DEFAULT_THEME])
+        QApplication.instance().setStyleSheet(build_stylesheet(theme))
+    # Self-Mod Slots
+    @pyqtSlot(list)
+    def _on_selfmod_proposals(self, proposals: list):
+        self._selfmod_page.add_proposal(proposals)
+        # Badge notification: switch tab indicator
+        self._signals.warning_added.emit("info",
+            f"ARIA detected {len(proposals)} behavioral pattern(s). Check Self-Mod panel."
+        )
+
+    @pyqtSlot(str)
+    def _on_proposal_approved(self, proposal_id: str):
+        if not self._selfmod: return
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            self.terminal_page.append_info(f"✔ Exported to Desktop: {os.path.basename(path)}")
-        except Exception as e:
-            self.terminal_page.append_error(f"Export failed: {e}")
+            key, value, ledger_entry = self._selfmod.approve(proposal_id)
+            self._apply_runtime_change(key, value)
+            self._signals.warning_added.emit("info", f"Self-Mod applied: {key} = {value}")
+            self._refresh_selfmod_page()
+        except (KeyError, ValueError) as e: self._signals.warning_added.emit("error", f"Approval failed: {e}")
+
+    @pyqtSlot(str)
+    def _on_proposal_rejected(self, proposal_id: str):
+        if not self._selfmod: return
+        try: self._selfmod.reject(proposal_id)
+        except KeyError as e: print(f"[MainWindow] Reject error: {e}")
+
+    @pyqtSlot(str)
+    def _on_rollback(self, entry_id: str):
+        if not self._selfmod: return
+        try:
+            key, old_value = self._selfmod.rollback(entry_id)
+            self._apply_runtime_change(key, old_value)
+            self._signals.warning_added.emit("info", f"Rolled back: {key} → {old_value}")
+            self._refresh_selfmod_page()
+        except (KeyError, ValueError) as e: self._signals.warning_added.emit("error", f"Rollback failed: {e}")
+
+    @pyqtSlot(str, object)
+    def _on_selfmod_applied(self, key: str, value): self._apply_runtime_change(key, value)
+
+    @pyqtSlot(str)
+    def _on_selfmod_rolled_back(self, entry_id: str): self._refresh_selfmod_page()
+
+    @pyqtSlot()
+    def _on_analyze_now(self):
+        if not self._selfmod: return
+        self._status_bar.set_status("Analyzing behavioral patterns...")
+        self._signals.chat_response.emit("assistant", "🔍 Running behavioral analysis on your session history...")
+        def _run():
+            proposals = self._selfmod.analyze_sync(self._session_id)
+            if proposals:
+                self._signals.selfmod_proposal.emit(proposals)
+                self._signals.chat_response.emit("assistant",
+                    f"✅ Found **{len(proposals)}** behavioral pattern(s). Check the **Self-Mod** tab to approve or reject."
+                )
+            else:
+                self._signals.chat_response.emit("assistant",
+                    "No significant patterns detected yet. Keep using ARIA and I'll analyze again as we interact more."
+                )
+            self._signals.status_update.emit("Ready")
+        threading.Thread(target=_run, daemon=True).start()
+    # Runtime Config Application
+    def _apply_runtime_change(self, key: str, value):
+        if key == "default_theme": self._apply_theme(str(value))
+        elif key == "tts_enabled": 
+            if not value: self._voice.stop_speaking()
+        elif key == "silent_mode":
+            self._voice.set_silent_mode(bool(value))
+            self._sidebar.apply_selfmod(
+                voice_on=not bool(value),
+                silent_on=bool(value),
+            )
+        elif key == "suggestion_count":
+            if self._engine: self._chat_page.set_suggestions(self._engine.get_suggestions("chat"))
+
+    def _apply_selfmod_config(self):
+        if not self._selfmod: return
+        config = self._selfmod.get_all()
+        for key, value in config.items():
+            try: self._apply_runtime_change(key, value)
+            except Exception as e: print(f"[Boot] Failed to apply {key}={value}: {e}")
+    # Self-Mod Page Refresh
+    def _refresh_selfmod_page(self):
+        if not self._selfmod: return
+        # Active mods
+        active = self._selfmod.get_active_modifications()
+        self._selfmod_page.load_active_mods(active)
+        # Full ledger
+        ledger = self._selfmod.get_ledger()
+        self._selfmod_page.load_ledger(ledger)
+        # Pending proposals
+        pending = self._selfmod.get_pending()
+        if pending: self._selfmod_page.load_proposals(pending)
+    # Close
+    def closeEvent(self, event):
+        self._health.stop()
+        if self._voice: self._voice.stop_speaking()
+        event.accept()

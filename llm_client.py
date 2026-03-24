@@ -1,190 +1,206 @@
-import json
-from openai import OpenAI
-from extract import offline_classify
-from constants import INTENT_CLASSIFIER_PROMPT, SUMMARIZE_PROMPT, EXPLAIN_PROMPT, URL_GEN_PROMPT, SEARCH_URL_TEMPLATES, SITE_ALIASES
-
-client_llm = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
-
-CHAT_MODEL    = "qwen3-vl-8b-instruct"
-INTENT_MODEL  = "oh-dcft-v3.1-claude-3-5-sonnet-20241022"
-VALID_MODES = (
-    "chat", "command", "wikipedia", "browser", "music", "search",
-    "show_apps", "time", "quick_open", "smart_search", "powershell",
-    "explain", "history", "rerun", "image_gen",
+import re, json, requests
+from typing import Optional, Generator
+from constants import (
+    LM_STUDIO_BASE_URL, CHAT_MODEL, CLASSIFIER_MODEL,
+    LLM_TIMEOUT, LLM_CHAT_TEMPERATURE, LLM_CLASS_TEMPERATURE,
+    SYSTEM_PROMPT, INTENT_CLASSIFIER_PROMPT, SUMMARIZE_PROMPT,
+    EXPLAIN_PROMPT, URL_GEN_PROMPT, BEHAVIORAL_INFERENCE_PROMPT,
+    PROPOSAL_GENERATION_PROMPT, SEARCH_TEMPLATES, SITE_ALIASES,
 )
 
-def classify_intent(user_input: str) -> dict:
-    offline = offline_classify(user_input)
-    if offline: return offline
-    try:
-        messages = [
-            {"role": "system", "content": INTENT_CLASSIFIER_PROMPT},
-            {"role": "user",   "content": user_input},
-        ]
-        completion = client_llm.chat.completions.create(
-            model=INTENT_MODEL,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=200,
+class LLMClient:
+    def __init__(self):
+        self._base = LM_STUDIO_BASE_URL
+        self._chat_model = CHAT_MODEL
+        self._cls_model  = CLASSIFIER_MODEL
+    # Connectivity
+    def ping(self) -> bool:
+        try:
+            r = requests.get(f"{self._base}/models", timeout=5)
+            return r.status_code == 200
+        except Exception: return False
+    # Internal helpers
+    def _post(self, payload: dict, stream: bool = False) -> requests.Response:
+        return requests.post(
+            f"{self._base}/chat/completions",
+            json=payload,
+            timeout=LLM_TIMEOUT,
+            stream=stream,
         )
-        raw = completion.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        intent = json.loads(raw)
-        assert intent["mode"] in VALID_MODES
-        assert 0.0 <= intent["confidence"] <= 1.0
-        return intent
-    except Exception as e:
-        return {
-            "mode": "chat",
-            "confidence": 0.0,
-            "reason": f"Classification error: {e}",
-            "action": None,
+
+    def _simple(self, model: str, system: str, user: str, temperature: float = 0.7) -> str:
+        payload = {
+            "model":       model,
+            "temperature": temperature,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
+            ],
         }
+        r = self._post(payload)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
 
-def summarize_output(raw_output: str) -> str:
-    try:
-        comp = client_llm.chat.completions.create(
-            model=CHAT_MODEL,
-            messages=[
-                {"role": "system", "content": SUMMARIZE_PROMPT},
-                {"role": "user",   "content": raw_output[:3000]},
-            ],
-            temperature=0.3,
-            max_tokens=400,
-        )
-        return comp.choices[0].message.content.strip()
-    except Exception as e:
-        return f"(Summary unavailable: {e})\n\n{raw_output}"
+    # Intent Classification
+    # Fast offline regex paths — zero LLM cost
+    _OFFLINE_PATTERNS = [
+        (r"^(hi|hello|hey|howdy|yo)\b",                         "chat",        0.99),
+        (r"\bopen\s+\w+\b",                                     "command",     0.90),
+        (r"\bplay\s+.+\b",                                      "music",       0.92),
+        (r"^https?://",                                         "browser",     0.99),
+        (r"\bwhat (time|date) is it\b",                         "time",        0.99),
+        (r"\b(show|list) (apps|installed)\b",                   "show_apps",   0.95),
+        (r"\b(ram|memory|cpu|disk|port|service|startup)\s*(usage|info|space|list)?\b", "powershell", 0.88),
+        (r"\b(search|find|look up)\s+.+\s+on\s+(youtube|github|arxiv|stackoverflow|huggingface|pypi|npm|reddit)\b", "smart_search", 0.95),
+        (r"\bwhat is\b|\bexplain\b|\bwho (is|was)\b",          "wikipedia",   0.80),
+        (r"\bgenerate.*(image|picture|photo|art)\b",            "image_gen",   0.93),
+        (r"\bexplain.*(code|function|class|error|snippet)\b",   "explain",     0.91),
+        (r"^/history\b",                                        "history",     0.99),
+        (r"^/rerun\s+\d+",                                      "rerun",       0.99),
+    ]
+    
+    def classify_intent(self, message: str) -> dict:
+        msg_lower = message.strip().lower()
+        # Try offline patterns first
+        for pattern, mode, conf in self._OFFLINE_PATTERNS:
+            if re.search(pattern, msg_lower): return {"mode": mode, "confidence": conf, "source": "offline"}
+        # Fall back to LLM
+        try:
+            prompt = INTENT_CLASSIFIER_PROMPT.format(message=message)
+            raw = self._simple(
+                self._cls_model,
+                "You are a fast intent classifier. Output only JSON.",
+                prompt,
+                temperature=LLM_CLASS_TEMPERATURE,
+            )
+            # Strip markdown fences if present
+            raw = re.sub(r"```json|```", "", raw).strip()
+            result = json.loads(raw)
+            result["source"] = "llm"
+            return result
+        except Exception as e: return {"mode": "chat", "confidence": 0.5, "source": "fallback", "error": str(e)}
+    # Chat (streaming)
+    def chat_stream(self, messages: list) -> Generator[str, None, None]:
+        payload = {
+            "model":       self._chat_model,
+            "temperature": LLM_CHAT_TEMPERATURE,
+            "stream":      True,
+            "messages":    [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+        }
+        try:
+            r = self._post(payload, stream=True)
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line: continue
+                line = line.decode("utf-8")
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data == "[DONE]": break
+                    try:
+                        chunk = json.loads(data)
+                        delta = chunk["choices"][0]["delta"].get("content", "")
+                        if delta: yield delta
+                    except json.JSONDecodeError: continue
+        except Exception as e: yield f"\n\n[LLM Error: {e}]"
 
-def explain_output(subject: str, context: str = "") -> str:
-    try:
-        prompt = f"Subject: {subject}"
-        if context:
-            prompt += f"\n\nOutput/context:\n{context[:2000]}"
-        comp = client_llm.chat.completions.create(
-            model=CHAT_MODEL,
-            messages=[
-                {"role": "system", "content": EXPLAIN_PROMPT},
-                {"role": "user",   "content": prompt},
-            ],
-            temperature=0.5,
-            max_tokens=600,
-        )
-        return comp.choices[0].message.content.strip()
-    except Exception as e:
-        return f"(Explanation unavailable: {e})"
+    def chat(self, messages: list) -> str:
+        payload = {
+            "model":       self._chat_model,
+            "temperature": LLM_CHAT_TEMPERATURE,
+            "messages":    [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+        }
+        try:
+            r = self._post(payload)
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e: return f"[LLM Error: {e}]"
+    # Summarize 
+    def summarize(self, text: str) -> str:
+        prompt = SUMMARIZE_PROMPT.format(output=text[:3000])
+        try: return self._simple(self._chat_model, "Summarize concisely.", prompt, 0.3)
+        except Exception as e: return f"[Summarize Error: {e}]"
+    # Explain
+    def explain(self, content: str) -> str:
+        prompt = EXPLAIN_PROMPT.format(content=content[:4000])
+        try: return self._simple(self._chat_model, "You are a technical explainer.", prompt, 0.5)
+        except Exception as e: return f"[Explain Error: {e}]"
+    # Smart URL generation
+    _URL_FAST_PATTERNS = [
+        (r"(?:search\s+)?(\w+)\s+for\s+(.+)", "_handle_site_search"),
+        (r"(?:go to|open|visit)\s+(https?://\S+)", "_handle_direct_url"),
+        (r"(?:go to|open|visit)\s+([\w.]+\.(?:com|org|net|io|dev|ai))", "_handle_bare_domain"),
+    ]
 
-def chat_completion(messages: list, temperature: float = 0.7, max_tokens: int = 800) -> str:
-    comp = client_llm.chat.completions.create(
-        model=CHAT_MODEL,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return comp.choices[0].message.content.strip()
-
-def generate_search_url(user_input: str) -> dict:
-    import re, urllib.parse
-
-    text = user_input.strip()
-    lower = text.lower()
-
-    # Regex fast-path
-    def _encode(q: str) -> str:
-        return urllib.parse.quote_plus(q.strip())
-
-    def _resolve_site(name: str) -> str:
-        """Normalise alias → canonical key."""
-        name = name.lower().strip()
-        return SITE_ALIASES.get(name, name)
-
-    def _make_url(site_key: str, query: str) -> str | None:
-        template = SEARCH_URL_TEMPLATES.get(site_key)
-        if not template:
-            return None
-        return template.replace("{query}", _encode(query))
-
-    # Pattern: "search <site> for <query>"  /  "find <query> on <site>"
-    m = re.search(
-        r"search\s+(\w+)\s+(?:for\s+)?(.+)$",
-        lower, re.IGNORECASE
-    )
-    if m:
-        site_key = _resolve_site(m.group(1))
-        query    = m.group(2).strip()
-        if site_key in SEARCH_URL_TEMPLATES:
-            url = _make_url(site_key, query)
-            return {"site": site_key, "url": url,
-                    "explanation": f"Searching {site_key} for '{query}'"}
-
-    m = re.search(
-        r"(?:find|look\s*up)\s+(.+?)\s+on\s+(\w[\w\s]*)$",
-        lower, re.IGNORECASE
-    )
-    if m:
-        query    = m.group(1).strip()
-        site_key = _resolve_site(m.group(2).strip())
-        if site_key in SEARCH_URL_TEMPLATES:
-            url = _make_url(site_key, query)
-            return {"site": site_key, "url": url,
-                    "explanation": f"Searching {site_key} for '{query}'"}
-
-    # Pattern: "open github <username>"  →  direct profile
-    m = re.search(r"open\s+github\s+(\S+)", lower)
-    if m:
-        username = m.group(1).lstrip("@")
-        url = f"https://github.com/{username}"
-        return {"site": "github", "url": url,
-                "explanation": f"Opening GitHub profile: {username}"}
-
-    # Pattern: "open youtube @<handle>"  →  direct channel
-    m = re.search(r"open\s+youtube\s+@?(\S+)", lower)
-    if m:
-        handle = m.group(1).lstrip("@")
-        url = f"https://www.youtube.com/@{handle}"
-        return {"site": "youtube", "url": url,
-                "explanation": f"Opening YouTube channel: @{handle}"}
-
-    # Pattern: "google <query>"
-    m = re.search(r"^google\s+(.+)$", lower)
-    if m:
-        url = _make_url("google", m.group(1).strip())
-        return {"site": "google", "url": url,
-                "explanation": f"Google search: '{m.group(1).strip()}'"}
-
-    # Pattern: "<site> <query>"  — bare "youtube networkchuck" style
-    for site_key, template in SEARCH_URL_TEMPLATES.items():
-        pattern = rf"^{re.escape(site_key)}\s+(.+)$"
-        m = re.match(pattern, lower)
+    def generate_url(self, query: str) -> Optional[str]:
+        q = query.strip()
+        # Pattern: "search <site> for <query>" or "<site> for <query>"
+        m = re.search(r"(?:search\s+)?(\w+)\s+for\s+(.+)", q, re.I)
         if m:
-            url = _make_url(site_key, m.group(1).strip())
-            return {"site": site_key, "url": url,
-                    "explanation": f"Searching {site_key}"}
+            site_raw, search_q = m.group(1).lower(), m.group(2).strip()
+            site = SITE_ALIASES.get(site_raw, site_raw)
+            if site in SEARCH_TEMPLATES: return SEARCH_TEMPLATES[site].replace("{q}", requests.utils.quote(search_q))
+        # Pattern: direct URL
+        m = re.search(r"(https?://\S+)", q)
+        if m: return m.group(1)
+        # Pattern: bare domain
+        m = re.search(r"([\w-]+\.(?:com|org|net|io|dev|ai|edu|gov))", q, re.I)
+        if m: return f"https://{m.group(1)}"
+        # LLM fallback
+        try:
+            url = self._simple(
+                self._chat_model,
+                "You generate URLs only. Return a single URL, nothing else.",
+                URL_GEN_PROMPT.format(query=q),
+                temperature=0.1,
+            )
+            url = url.strip().split()[0]
+            if url.startswith("http"): return url
+        except Exception: pass
+        # Final fallback: Google
+        return SEARCH_TEMPLATES["google"].replace("{q}", requests.utils.quote(q))
+    # Behavioral Inference
+    def infer_behavioral_patterns(self, interactions: list, n: int = 40) -> list:
+        if not interactions: return []
+        history_str = json.dumps(interactions[:n], indent=2)
+        prompt = BEHAVIORAL_INFERENCE_PROMPT.format(n=min(n, len(interactions)), history=history_str)
+        try:
+            raw = self._simple(
+                self._chat_model,
+                "You are a behavioral pattern analyzer. Output only JSON arrays.",
+                prompt,
+                temperature=0.2,
+            )
+            raw = re.sub(r"```json|```", "", raw).strip()
+            patterns = json.loads(raw)
+            if isinstance(patterns, list): return patterns
+        except Exception as e: print(f"[Behavioral Inference] Error: {e}")
+        return []
 
-    # LLM fallback
-    try:
-        template_lines = "\n".join(
-            f"  {k}: {v}" for k, v in SEARCH_URL_TEMPLATES.items()
+    def generate_proposal_text(self, pattern: dict) -> str:
+        prompt = PROPOSAL_GENERATION_PROMPT.format(
+            pattern=pattern.get("pattern", ""),
+            proposed_change=pattern.get("proposed_change", ""),
+            confidence=pattern.get("confidence", 0.0),
         )
-        system = URL_GEN_PROMPT.replace("{templates}", template_lines)
-        raw = chat_completion(
-            [{"role": "system", "content": system},
-             {"role": "user",   "content": text}],
-            temperature=0.1,
-            max_tokens=200,
-        )
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        data = json.loads(raw)
-        if data.get("url"):
-            return {
-                "site":        data.get("site", "web"),
-                "url":         data["url"],
-                "explanation": data.get("explanation", f"Opening {data['url']}"),
-            }
-    except Exception:
-        pass
-
-    # Absolute fallback — google everything
-    url = _make_url("google", text)
-    return {"site": "google", "url": url,
-            "explanation": f"Google search: '{text}'"}
+        try: return self._simple(
+                self._chat_model,
+                "Write concise UI proposal text for the user.",
+                prompt,
+                temperature=0.4,
+            )
+        except Exception: return pattern.get("proposed_change", "Configuration change proposed.")
+    # Wikipedia
+    def wikipedia_lookup(self, query: str) -> str:
+        try:
+            import urllib.parse
+            q = urllib.parse.quote(query)
+            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{q}"
+            r = requests.get(url, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                title   = data.get("title", "")
+                extract = data.get("extract", "No summary available.")
+                page_url= data.get("content_urls", {}).get("desktop", {}).get("page", "")
+                return f"**{title}**\n\n{extract}\n\n[Read more]({page_url})"
+            else: return f"Wikipedia: No article found for '{query}'."
+        except Exception as e: return f"Wikipedia lookup failed: {e}"

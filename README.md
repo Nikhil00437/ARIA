@@ -1,200 +1,153 @@
 # ARIA — Advanced Runtime Intelligence Assistant
 
-> A fully local, privacy-first AI desktop assistant for Windows. No cloud. No subscriptions. No data leaving your machine.
-
-![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
-![PyQt5](https://img.shields.io/badge/GUI-PyQt5-green?logo=qt&logoColor=white)
-![LM Studio](https://img.shields.io/badge/LLM-LM%20Studio-purple)
-![MongoDB](https://img.shields.io/badge/Database-MongoDB-47A248?logo=mongodb&logoColor=white)
-![License](https://img.shields.io/github/license/Nikhil00437/ARIA)
-![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)
-
----
-
-## What is ARIA?
-
-ARIA is a **local-first AI desktop assistant** built with PyQt5 that runs entirely on your own hardware using [LM Studio](https://lmstudio.ai) for LLM inference. It converts natural language into system actions, generates images via Stable Diffusion, responds with a voice engine, and persists conversations in MongoDB — all without sending a single byte to an external server.
-
-Think of it as a privacy-respecting alternative to cloud AI assistants, engineered from scratch as a modular Python desktop application.
-
----
-
-## Features
-
-| Feature | Description |
-|---|---|
-| 💬 **Local LLM Chat** | Conversational AI powered by any model loaded in LM Studio |
-| 🎨 **Image Generation** | Stable Diffusion integration — generate images inline in the chat |
-| 🔊 **Voice Engine** | Text-to-speech responses via the built-in voice module |
-| 🗄️ **Persistent Memory** | Full conversation history stored locally in MongoDB |
-| ⚙️ **System Automation** | Natural language → Windows system commands via `executor.py` |
-| 📄 **Document Extraction** | Read and process file content with `extract.py` |
-| 🔒 **Zero Cloud Dependency** | All inference runs locally — no API keys, no subscriptions |
-| 🧩 **Modular Architecture** | 15 decoupled modules — easy to extend or swap components |
+A local-first, privacy-focused Windows desktop AI assistant with an integrated **Self-Modification System**. Runs entirely on-device using LM Studio — no cloud dependency.
 
 ---
 
 ## Architecture
 
-ARIA is split into 15 focused modules, each with a single responsibility:
-
 ```
 ARIA/
-├── main.py                  # Entry point — bootstraps the application
-├── main_window.py           # Root PyQt5 window, layout orchestration
-├── pages.py                 # Page/view management (chat, settings, etc.)
-├── sidebar.py               # Navigation sidebar component
-├── widgets.py               # Reusable UI widgets
-├── styles.py                # Global stylesheet definitions
-├── signals.py               # Qt signal/slot definitions across modules
-├── chat_engine.py           # Core chat loop — assembles prompt, calls LLM, routes response
-├── llm_client.py            # LM Studio API client (OpenAI-compatible endpoint)
-├── voice_engine.py          # Text-to-speech engine
-├── image_generation_try.py  # Stable Diffusion image generation
-├── executor.py              # Natural language → system command execution
-├── extract.py               # File/document content extraction
-├── database.py              # MongoDB connection, conversation persistence
-└── constants.py             # App-wide configuration and constants
+├── main.py                  # Entry point
+├── main_window.py           # Central orchestrator
+├── chat_engine.py           # Intent → action pipeline
+├── llm_client.py            # LM Studio communication
+├── extract.py               # Safety, NL→PS, error diagnosis
+├── executor.py              # Command execution
+├── database.py              # MongoDB persistence
+├── voice_engine.py          # TTS (pyttsx3) + STT (faster-whisper)
+├── image_generation.py      # Stable Diffusion via diffusers
+├── signals.py               # PyQt5 signal bridge + HealthMonitor
+├── sidebar.py               # Navigation panel
+├── pages.py                 # Chat, Terminal, Timeline, Warnings
+├── selfmod_page.py          # Self-Modification UI
+├── styles.py                # Dynamic QSS theme generator
+├── title.py                 # Frameless title bar
+├── widgets.py               # Reusable UI components
+├── constants.py             # All config, prompts, templates
+├── requirements.txt
+└── selfmod/
+    ├── __init__.py
+    ├── inferencer.py        # Behavioral Intent Inferencer
+    ├── proposal_engine.py   # Modification Proposal Engine
+    ├── sandbox.py           # Permission-Gated Sandbox + Rollback Ledger
+    └── controller.py        # Self-Mod orchestrator
 ```
 
 ---
 
-## Prerequisites
+## Setup
 
-- Windows 10 / 11
+### 1. Prerequisites
 - Python 3.10+
-- [LM Studio](https://lmstudio.ai) — installed and running with a model loaded
-- [MongoDB Community](https://www.mongodb.com/try/download/community) — running locally on default port `27017`
-- (Optional) Stable Diffusion — for image generation
+- [LM Studio](https://lmstudio.ai) running locally on port 1234
+- MongoDB running locally on port 27017
+- Windows 10/11
 
----
-
-## Installation
-
+### 2. Install dependencies
 ```bash
-# 1. Clone the repository
-git clone https://github.com/Nikhil00437/ARIA.git
-cd ARIA
-
-# 2. Create a virtual environment
-python -m venv venv
-venv\Scripts\activate      # Windows
-
-# 3. Install dependencies
 pip install -r requirements.txt
+```
 
-# 4. Start LM Studio and load your preferred model
-#    Enable the local server (default: http://localhost:1234)
+### 3. LM Studio setup
+- Load `qwen3-vl-8b-instruct` (or any compatible model) as the chat model
+- Enable the local server (default: `http://localhost:1234`)
+- Optionally load a smaller/faster model as the classifier
 
-# 5. Ensure MongoDB is running
-#    Default connection: mongodb://localhost:27017
-
-# 6. Launch ARIA
+### 4. Run
+```bash
 python main.py
 ```
 
 ---
 
-## Configuration
+## Intent Modes
 
-Edit `constants.py` to configure your setup:
-
-```python
-# LM Studio endpoint (default)
-LM_STUDIO_URL = "http://localhost:1234/v1"
-
-# MongoDB connection
-MONGO_URI = "mongodb://localhost:27017"
-DB_NAME = "aria_db"
-
-# Voice engine settings
-VOICE_RATE = 175       # Speech speed (words per minute)
-VOICE_VOLUME = 1.0     # Volume (0.0 – 1.0)
-```
-
----
-
-## How It Works
-
-```
-User types message
-        │
-        ▼
-  chat_engine.py          ← Assembles system prompt + conversation history
-        │
-        ▼
-  llm_client.py           ← Sends to LM Studio (OpenAI-compatible API)
-        │
-        ▼
-  Response received
-        │
-    ┌───┴────────────────────────────────┐
-    │                                    │
-    ▼                                    ▼
-voice_engine.py              executor.py / image_generation_try.py
-(text response)              (if system command or image prompt detected)
-    │                                    │
-    └───────────────┬────────────────────┘
-                    ▼
-             database.py          ← Saves exchange to MongoDB
-                    │
-                    ▼
-          UI updated (PyQt5)
-```
+| Mode | Trigger | Handler |
+|---|---|---|
+| `chat` | General conversation | LLM streaming chat |
+| `command` | "open X", "run X" | App resolver + executor |
+| `wikipedia` | "what is X", "who is X" | MediaWiki REST API |
+| `browser` | Direct URLs | Default browser |
+| `music` | "play X" | Spotify / YouTube |
+| `search` | "search X" | Smart URL builder |
+| `smart_search` | "search X on GitHub" | Platform-specific URLs |
+| `powershell` | "show RAM usage", "list services" | NL→PS translation |
+| `explain` | "explain this code" | LLM explanation |
+| `image_gen` | "generate image of X" | Stable Diffusion 2.1 |
+| `time` | "what time is it" | System clock |
+| `history` | `/history` | MongoDB query |
+| `rerun` | `/rerun N` | Re-execute command N |
 
 ---
 
-## Tech Stack
+## Self-Modification System
 
-| Component | Technology |
+### Overview
+ARIA monitors your interaction patterns and proposes targeted configuration changes. All changes require explicit approval and are fully reversible.
+
+### Components
+
+**1. Behavioral Intent Inferencer** (`selfmod/inferencer.py`)
+- Analyzes the last 60 interactions (chat + commands)
+- Two-tier: rule-based fast detection + LLM deep analysis
+- Detects patterns like: repeated brevity requests, preferred search sites, mute preferences, failure patterns
+
+**2. Modification Proposal Engine** (`selfmod/proposal_engine.py`)
+- Translates patterns into scoped, validated `Proposal` objects
+- Enforces boundary rules (locked params can never appear in proposals)
+- Generates human-readable proposal text via LLM
+
+**3. Permission-Gated Sandbox** (`selfmod/sandbox.py`)
+- Single source of truth for runtime config
+- Layered: defaults → persisted active modifications
+- All changes require explicit user approval in the UI
+
+**4. Rollback Ledger** (`selfmod/sandbox.py`)
+- Append-only MongoDB collection — no entry is ever deleted
+- Every approved modification recorded with before/after state
+- One-click rollback per entry from the Ledger tab
+
+### Modifiable Parameters
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `output_mode` | choice | `verbose` | Full output vs condensed bullets |
+| `smart_search_threshold` | float | `0.75` | Classifier confidence for smart_search |
+| `tts_enabled` | bool | `true` | Text-to-speech on/off |
+| `silent_mode` | bool | `false` | Only speak errors/confirmations |
+| `default_theme` | choice | `cyber` | Startup theme |
+| `suggestion_count` | int | `3` | Chat suggestion count |
+| `custom_shortcuts` | dict | `{}` | Alias → app/URL mappings |
+| `preferred_search_sites` | list | `[]` | Prioritized search platforms |
+| `confirmation_verbosity` | choice | `full` | Command confirmation detail |
+| `response_length_preference` | choice | `concise` | Response length bias |
+
+### Permanently Locked (never modifiable)
+`blocked_patterns`, `confirm_patterns`, `system_prompt_safety`, `executor_security`, `mongo_uri`, `lm_studio_base_url`
+
+---
+
+## Slash Commands
+
+| Command | Action |
 |---|---|
-| GUI Framework | PyQt5 |
-| LLM Inference | LM Studio (OpenAI-compatible local API) |
-| Image Generation | Stable Diffusion |
-| Voice Engine | pyttsx3 / Windows SAPI |
-| Database | MongoDB (pymongo) |
-| Language | Python 3.10+ |
+| `/help` | Show all commands |
+| `/history` | Last 10 commands with status |
+| `/rerun N` | Re-run command #N |
+| `/snapshot` | System health snapshot |
+| `/selfmod` | Trigger behavioral analysis now |
+| `/mods` | Show active modifications |
 
 ---
 
-## Roadmap
-
-- [ ] Plugin system for custom command modules
-- [ ] Model switching from within the UI
-- [ ] RAG (Retrieval-Augmented Generation) over local documents
-- [ ] Hotkey activation (always-on-screen mode)
-- [ ] Settings panel for voice/model/database config
-- [ ] Linux support
+## Themes
+- **Cyber** — Dark green terminal aesthetic (default)
+- **Minimal** — Light blue clean design
+- **Classic** — Monochrome dark
 
 ---
 
-## Contributing
-
-Contributions are welcome. To get started:
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Commit your changes: `git commit -m 'Add your feature'`
-4. Push and open a Pull Request
-
-Please keep new features modular — one concern per file, consistent with the existing architecture.
-
----
-
-## License
-
-MIT License — see [LICENSE](./LICENSE) for details.
-
----
-
-## Author
-
-**Nikhil Bisht**
-
-[![GitHub](https://img.shields.io/badge/GitHub-Nikhil00437-181717?logo=github)](https://github.com/Nikhil00437)
-[![HuggingFace](https://img.shields.io/badge/HuggingFace-Nikhil1581-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/Nikhil1581)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-nikhil--bisht-0A66C2?logo=linkedin)](https://www.linkedin.com/in/nikhil-bisht-986047298/)
-
----
-
-*If ARIA was useful or interesting, leaving a ⭐ on the repo is appreciated.*
+## Notes
+- Image generation requires a CUDA GPU for reasonable performance. CPU fallback works but is slow.
+- STT uses faster-whisper `tiny` model (CPU, int8). Upgrade to `base` or `small` for better accuracy.
+- All data stays local: MongoDB, LM Studio, and the Stable Diffusion model run on your machine.

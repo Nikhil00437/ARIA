@@ -1,428 +1,375 @@
-import re
-from datetime import datetime
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QPushButton, QLabel, QListWidget, QListWidgetItem, QFrame
-from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtGui import QFont, QTextCursor
-from widgets import CollapsibleSection
-from constants import THEMES
+import datetime
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton, QLineEdit, QSizePolicy, QPlainTextEdit, QTextEdit
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtGui import QTextCursor, QFont
+from widgets import TypingIndicator
 
-# Chat page
+# Chat Page
 class ChatPage(QWidget):
-    message_submitted = pyqtSignal(str)
-    quick_action      = pyqtSignal(str)
+    message_submitted  = pyqtSignal(str)
+    suggestion_clicked = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        # Message area
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setObjectName("ChatArea")
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        # Chat display
-        self.chat_display = QTextEdit()
-        self.chat_display.setObjectName("chatDisplay")
-        self.chat_display.setReadOnly(True)
-        self.chat_display.setFont(QFont("Consolas", 10))
-        layout.addWidget(self.chat_display, stretch=1)
+        self._msg_container = QWidget()
+        self._msg_container.setObjectName("ChatArea")
+        self._msg_layout = QVBoxLayout(self._msg_container)
+        self._msg_layout.setContentsMargins(16, 16, 16, 16)
+        self._msg_layout.setSpacing(6)
+        self._msg_layout.addStretch()
 
-        # Quick actions (collapsible)
-        self.quick_section = CollapsibleSection("Quick Actions")
-        self._build_quick_actions()
-        layout.addWidget(self.quick_section)
-
+        self._scroll.setWidget(self._msg_container)
+        # Typing indicator
+        self._typing = TypingIndicator()
+        self._typing.hide()
+        # STT status
+        self._stt_status = QLabel("")
+        self._stt_status.setObjectName("STTStatus")
+        self._stt_status.hide()
         # Suggestions
-        self.suggestion_list = QListWidget()
-        self.suggestion_list.setObjectName("suggestionList")
-        self.suggestion_list.setMaximumHeight(110)
-        self.suggestion_list.setFont(QFont("Consolas", 9))
-        self.suggestion_list.hide()
-        self.suggestion_list.itemClicked.connect(self._on_suggestion_clicked)
-        layout.addWidget(self.suggestion_list)
+        self._suggestions_widget = QWidget()
+        self._suggestions_layout = QHBoxLayout(self._suggestions_widget)
+        self._suggestions_layout.setContentsMargins(8, 4, 8, 4)
+        self._suggestions_layout.setSpacing(6)
+        self._suggestions_layout.addStretch()
+        # Input area
+        input_widget = QWidget()
+        input_widget.setObjectName("InputArea")
+        input_layout = QVBoxLayout(input_widget)
+        input_layout.setContentsMargins(12, 8, 12, 8)
+        input_layout.setSpacing(4)
 
-        # Input row
-        input_container = QFrame()
-        input_container.setObjectName("inputContainer")
-        input_lyt = QHBoxLayout(input_container)
-        input_lyt.setContentsMargins(14, 10, 10, 10)
-        input_lyt.setSpacing(10)
+        row = QHBoxLayout()
+        self._input = QLineEdit()
+        self._input.setObjectName("ChatInput")
+        self._input.setPlaceholderText("Message ARIA...")
+        self._input.returnPressed.connect(self._submit)
 
-        self.input_field = QLineEdit()
-        self.input_field.setObjectName("inputField")
-        self.input_field.setPlaceholderText(
-            "Ask anything or give a command…  (/history, /rerun N)"
-        )
-        self.input_field.setFont(QFont("Consolas", 10))
-        self.input_field.returnPressed.connect(self._submit)
-        self.input_field.textChanged.connect(self._on_text_changed)
+        self._send_btn = QPushButton("Send")
+        self._send_btn.setObjectName("SendBtn")
+        self._send_btn.clicked.connect(self._submit)
+        self._send_btn.setFixedWidth(80)
 
-        send_btn = QPushButton("SEND  ↵")
-        send_btn.setObjectName("sendBtn")
-        send_btn.setFont(QFont("Consolas", 9, QFont.Bold))
-        send_btn.setFixedWidth(110)
-        send_btn.clicked.connect(self._submit)
+        row.addWidget(self._input)
+        row.addWidget(self._send_btn)
+        input_layout.addWidget(self._suggestions_widget)
+        input_layout.addLayout(row)
 
-        input_lyt.addWidget(self.input_field)
-        input_lyt.addWidget(send_btn)
-        layout.addWidget(input_container)
+        # Streaming display
+        self.chat_display = QTextEdit()
+        self.chat_display.setObjectName("ChatDisplay")
+        self.chat_display.setReadOnly(True)
+        self.chat_display.setMaximumHeight(200)
 
-        # STT status label (hidden by default, shown while recording / transcribing)
-        self.stt_label = QLabel("")
-        self.stt_label.setObjectName("sttLabel")
-        self.stt_label.setFont(QFont("Consolas", 8))
-        self.stt_label.setAlignment(Qt.AlignCenter)
-        self.stt_label.hide()
-        layout.addWidget(self.stt_label)
+        layout.addWidget(self._scroll, 1)
+        layout.addWidget(self.chat_display)
+        layout.addWidget(self._stt_status)
+        layout.addWidget(self._typing)
+        layout.addWidget(input_widget)
+        # Streaming buffer
+        self._streaming_label: QLabel = None
 
-        layout.addSpacing(8)
-
-    # Public
-    def append_message(self, role: str, content: str, mode: str, theme: dict):
-        t = theme
-        if role == "user":
-            name_color, text_color, prefix = t["accent"], t["text"], "YOU"
-        elif role == "system":
-            name_color, text_color, prefix = t["dim"], t["dim"], "SYS"
-        else:
-            name_color = "#888888"
-            text_color = t["text"]
-            mode_tag_map = {
-                "command":    f"<span style='color:{t['accent']};font-size:7pt'>[ CMD ]</span>",
-                "powershell": "<span style='color:#ce93d8;font-size:7pt'>[ PWSH ]</span>",
-                "wikipedia":  "<span style='color:#80cbc4;font-size:7pt'>[ WIKI ]</span>",
-                "browser":    "<span style='color:#80deea;font-size:7pt'>[ BROWSER ]</span>",
-                "music":      "<span style='color:#ce93d8;font-size:7pt'>[ MUSIC ]</span>",
-                "search":     f"<span style='color:{t['accent2']};font-size:7pt'>[ SEARCH ]</span>",
-                "show_apps":  "<span style='color:#90caf9;font-size:7pt'>[ APPS ]</span>",
-                "time":       "<span style='color:#fff59d;font-size:7pt'>[ TIME ]</span>",
-                "quick_open": f"<span style='color:{t['accent']};font-size:7pt'>[ QUICK ]</span>",
-                "explain":    "<span style='color:#ffcc80;font-size:7pt'>[ EXPLAIN ]</span>",
-                "image_gen":  f"<span style='color:{t['accent2']};font-size:7pt'>[ IMAGE GEN ]</span>",
-                "smart_search": "<span style='color:#80deea;font-size:7pt'>[ 🔍 SEARCH ]</span>",
-            }
-            tag = mode_tag_map.get(mode, "")
-            prefix = f"ARIA  {tag}"
-
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        safe = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
-        safe = re.sub(
-            r"`([^`]+)`",
-            rf'<code style="background:{t["chat_bg"]};color:{t["accent"]};padding:1px 4px;border-radius:2px;">\1</code>',
-            safe,
-        )
-        html = f"""
-        <div style='margin-bottom:14px;border-left:2px solid {t["border"]};padding-left:10px;'>
-            <div style='font-size:7.5pt;color:{t["dim"]};margin-bottom:3px;letter-spacing:1px;'>
-                <span style='color:{name_color};'>{prefix}</span>
-                &nbsp;&nbsp;<span style='color:{t["border"]};'>{timestamp}</span>
-            </div>
-            <div style='color:{text_color};line-height:1.65;white-space:pre-wrap;font-size:10pt;'>{safe}</div>
-        </div>
-        """
-        self.chat_display.append(html)
-        self.chat_display.moveCursor(QTextCursor.End)
-
-    def show_image(self, b64: str, border: str):
-        html = f"""
-        <div style='margin-bottom:14px;border-left:2px solid {border};padding-left:10px;'>
-            <img src='data:image/png;base64,{b64}'
-                 style='max-width:400px;border-radius:6px;border:1px solid {border};'/>
-        </div>
-        """
-        self.chat_display.append(html)
-        self.chat_display.moveCursor(QTextCursor.End)
-
-    def show_suggestions(self, suggestions: list):
-        self.suggestion_list.clear()
-        for s in suggestions:
-            self.suggestion_list.addItem(QListWidgetItem(s))
-        self.suggestion_list.setVisible(bool(suggestions))
-
-    def set_stt_status(self, msg: str, color: str = "#ffcc00"):
-        if msg:
-            self.stt_label.setText(msg)
-            self.stt_label.setStyleSheet(f"color: {color}; letter-spacing: 1px;")
-            self.stt_label.show()
-        else:
-            self.stt_label.hide()
-
-    def set_input_text(self, text: str):
-        self.input_field.setText(text)
-        self.input_field.setFocus()
-
-    def set_input_placeholder(self, text: str):
-        self.input_field.setPlaceholderText(text)
-
-    # Private
     def _submit(self):
-        text = self.input_field.text().strip()
+        text = self._input.text().strip()
         if text:
-            self.input_field.clear()
-            self.suggestion_list.hide()
+            self._input.clear()
             self.message_submitted.emit(text)
 
-    def _on_suggestion_clicked(self, item: QListWidgetItem):
-        self.input_field.setText(item.text())
-        self.suggestion_list.hide()
-        self.input_field.setFocus()
+    def add_message(self, role: str, text: str):
+        # Stop any active stream first
+        if self._streaming_label: self._streaming_label = None
+        container = QWidget()
+        vlayout = QVBoxLayout(container)
+        vlayout.setContentsMargins(0, 0, 0, 0)
+        vlayout.setSpacing(2)
+        # Role label
+        role_label = QLabel("You" if role == "user" else "ARIA")
+        role_label.setObjectName("MessageRole")
+        # Message text
+        msg_label = QLabel(text)
+        msg_label.setObjectName("UserBubble" if role == "user" else "AiBubble")
+        msg_label.setWordWrap(True)
+        msg_label.setTextFormat(Qt.MarkdownText)
+        msg_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        msg_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-    def _on_text_changed(self, text: str):
-        from constants import SUGGESTION_MAP
-        text_lower = text.lower().strip()
-        if not text_lower:
-            self.suggestion_list.hide()
-            return
-        suggestions = []
-        for trigger, options in SUGGESTION_MAP.items():
-            if text_lower.startswith(trigger.lower()):
-                suggestions = [o for o in options if text_lower in o.lower() or o.lower().startswith(text_lower)]
-                break
-            elif trigger.lower() in text_lower:
-                suggestions = options[:4]
-                break
-        self.show_suggestions(suggestions[:6]) if suggestions else self.suggestion_list.hide()
+        vlayout.addWidget(role_label)
+        vlayout.addWidget(msg_label)
+        # Alignment
+        outer = QHBoxLayout()
+        if role == "user":
+            outer.addStretch()
+            outer.addWidget(container)
+        else:
+            outer.addWidget(container)
+            outer.addStretch()
+        outer_widget = QWidget()
+        outer_widget.setLayout(outer)
+        # Insert before the stretch at bottom
+        self._msg_layout.insertWidget(self._msg_layout.count() - 1, outer_widget)
+        self._scroll_to_bottom()
 
-    def _build_quick_actions(self):
-        def _btn(label, cmd):
-            b = QPushButton(label)
-            b.setObjectName("actionBtn")
-            b.setFont(QFont("Consolas", 8))
-            b.clicked.connect(lambda _c, c=cmd: self.quick_action.emit(c))
-            return b
+    def clear_messages(self):
+        while self._msg_layout.count() > 1:
+            item = self._msg_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
-        self.quick_section.add_row([
-            _btn("YouTube", "open YouTube"), _btn("Google", "open Google"),
-            _btn("Stack Overflow", "open Stack Overflow"), _btn("Spotify", "open Spotify"),
-        ])
-        self.quick_section.add_row([
-            _btn("VS Code", "open code"), _btn("CMD", "open cmd"),
-            _btn("Play Music", "play music"), _btn("Time", "what time is it"),
-        ])
-        self.quick_section.add_row([
-            _btn("PDFs", "search pdf"), _btn("Python", "search py"),
-            _btn("Docs", "search docx"), _btn("Show Apps", "show apps"),
-        ])
-        self.quick_section.add_row([
-            _btn("Top Memory", "show top memory apps"),
-            _btn("Services", "list running services"),
-            _btn("Open Ports", "show open ports"),
-            _btn("Flush DNS", "flush dns"),
-        ])
+    def _stream_chunk(self, chunk: str):
+        cursor = self.chat_display.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.chat_display.setTextCursor(cursor)
+        self.chat_display.insertPlainText(chunk)
+        self.chat_display.moveCursor(QTextCursor.End)
 
-# Terminal page
+    def _start_stream_bubble(self, theme: dict):
+        t = theme
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        html = (
+            f"<div style='margin-bottom:14px;border-left:2px solid {t['border']};padding-left:10px;'>"
+            f"<div style='font-size:7.5pt;color:{t['dim']};margin-bottom:3px;letter-spacing:1px;'>"
+            f"<span style='color:#888888;'>ARIA  "
+            f"<span style='color:#ef9a9a;font-size:7pt'>[ ● STREAMING ]</span></span>"
+            f"&nbsp;&nbsp;<span style='color:{t['border']};'>{timestamp}</span>"
+            f"</div>"
+            f"<span id='stream_target' style='color:{t['text']};line-height:1.65;font-size:10pt;'></span>"
+            f"</div>"
+        )
+        self.chat_display.append(html)
+        self.chat_display.moveCursor(QTextCursor.End)
+        self._stream_buffer = ""
+
+    def _end_stream_bubble(self):
+        # Re-render the buffered plain text as a proper message bubble
+        if hasattr(self, '_stream_buffer') and self._stream_buffer:
+            # Remove the incomplete streaming bubble
+            doc = self.chat_display.document()
+            cursor = QTextCursor(doc)
+            cursor.movePosition(QTextCursor.End)
+            # Append the final clean version
+            self.append_message("assistant", self._stream_buffer, "chat",
+                                getattr(self, '_last_theme', {}))
+            self._stream_buffer = ""
+        self.chat_display.moveCursor(QTextCursor.End)
+
+    def set_typing(self, active: bool):
+        if active:
+            self._typing.start()
+            self._typing.show()
+        else:
+            self._typing.stop()
+            self._typing.hide()
+
+    def set_stt_status(self, text: str):
+        if text:
+            self._stt_status.setText(text)
+            self._stt_status.show()
+        else: self._stt_status.hide()
+
+    def set_input_text(self, text: str): self._input.setText(text)
+
+    def set_suggestions(self, suggestions: list):
+        # Clear old
+        while self._suggestions_layout.count() > 1:
+            item = self._suggestions_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        for s in suggestions:
+            btn = QPushButton(s)
+            btn.setObjectName("SuggestionBtn")
+            btn.clicked.connect(lambda _, t=s: self.suggestion_clicked.emit(t))
+            self._suggestions_layout.insertWidget(self._suggestions_layout.count() - 1, btn)
+
+    def _scroll_to_bottom(self): QTimer.singleShot(50, lambda: self._scroll.verticalScrollBar().setValue(
+            self._scroll.verticalScrollBar().maximum()
+        ))
+
+# Terminal Page
 class TerminalPage(QWidget):
     command_submitted = pyqtSignal(str)
-    export_requested  = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
 
-        self.terminal_display = QTextEdit()
-        self.terminal_display.setObjectName("terminalDisplay")
-        self.terminal_display.setReadOnly(True)
-        self.terminal_display.setFont(QFont("Consolas", 9))
-        layout.addWidget(self.terminal_display, stretch=1)
+        header = QLabel("⌨️  Terminal")
+        header.setObjectName("SectionHeader")
+        layout.addWidget(header)
 
-        # Quick command buttons
-        quick_row = QHBoxLayout()
-        quick_row.setSpacing(6)
-        for label, cmd in [
-            ("Dir",       "dir %USERPROFILE%"),
-            ("Processes", "tasklist"),
-            ("Network",   "ipconfig"),
-            ("System",    'systeminfo | findstr /C:"OS" /C:"Memory"'),
-            ("Disks",     "wmic logicaldisk get caption,freespace,size"),
-        ]:
-            btn = QPushButton(label)
-            btn.setObjectName("quickBtn")
-            btn.setFont(QFont("Consolas", 8))
-            btn.clicked.connect(lambda _c, c=cmd: self.command_submitted.emit(c))
-            quick_row.addWidget(btn)
-        layout.addLayout(quick_row)
-
+        self._output = QPlainTextEdit()
+        self._output.setObjectName("TerminalOutput")
+        self._output.setReadOnly(True)
+        self._output.setFont(QFont("Consolas", 11))
+        layout.addWidget(self._output, 1)
+        # Export button
+        export_btn = QPushButton("📤 Export Log")
+        export_btn.clicked.connect(self._export)
+        layout.addWidget(export_btn)
         # Input row
-        input_row = QHBoxLayout()
-        input_row.setSpacing(8)
+        row = QHBoxLayout()
+        self._prompt = QLabel("PS >")
+        self._prompt.setObjectName("TerminalPrompt")
 
-        self.terminal_input = QLineEdit()
-        self.terminal_input.setObjectName("terminalInput")
-        self.terminal_input.setPlaceholderText("Enter Windows command…")
-        self.terminal_input.setFont(QFont("Consolas", 10))
-        self.terminal_input.returnPressed.connect(self._submit)
+        self._input = QLineEdit()
+        self._input.setObjectName("TerminalInput")
+        self._input.setPlaceholderText("Enter command...")
+        self._input.returnPressed.connect(self._submit)
 
-        run_btn = QPushButton("▶  Run")
-        run_btn.setObjectName("termRunBtn")
-        run_btn.setFont(QFont("Consolas", 9, QFont.Bold))
-        run_btn.setFixedWidth(90)
+        run_btn = QPushButton("Run")
         run_btn.clicked.connect(self._submit)
+        run_btn.setFixedWidth(60)
 
-        clear_btn = QPushButton("Clear")
-        clear_btn.setObjectName("termClearBtn")
-        clear_btn.setFont(QFont("Consolas", 9))
-        clear_btn.setFixedWidth(70)
-        clear_btn.clicked.connect(self.terminal_display.clear)
-
-        export_btn = QPushButton("Export")
-        export_btn.setObjectName("termClearBtn")
-        export_btn.setFont(QFont("Consolas", 9))
-        export_btn.setFixedWidth(70)
-        export_btn.clicked.connect(self.export_requested.emit)
-
-        input_row.addWidget(self.terminal_input)
-        input_row.addWidget(run_btn)
-        input_row.addWidget(clear_btn)
-        input_row.addWidget(export_btn)
-        layout.addLayout(input_row)
-
-    def append_output(self, command: str, output: str, dim: str, accent: str):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.terminal_display.append(
-            f"<span style='color:{dim}'>[{timestamp}]</span> "
-            f"<span style='color:{accent}'>$ {command}</span>"
-        )
-        color = "#ef9a9a" if output.startswith(("❌", "⛔")) else "#6a9a6a"
-        self.terminal_display.append(f"<span style='color:{color}'>{output}</span>\n")
-
-    def append_info(self, message: str):
-        self.terminal_display.append(
-            f"<span style='color:#4caf50'>{message}</span>\n"
-        )
-
-    def append_warning(self, message: str):
-        self.terminal_display.append(
-            f"<span style='color:#ffcc00'>⚠ {message}</span>\n"
-        )
-
-    def append_error(self, message: str):
-        self.terminal_display.append(
-            f"<span style='color:#f44336'>❌ {message}</span>\n"
-        )
+        row.addWidget(self._prompt)
+        row.addWidget(self._input, 1)
+        row.addWidget(run_btn)
+        layout.addLayout(row)
 
     def _submit(self):
-        cmd = self.terminal_input.text().strip()
+        cmd = self._input.text().strip()
         if cmd:
-            self.terminal_input.clear()
+            self._output.appendPlainText(f"PS > {cmd}")
+            self._input.clear()
             self.command_submitted.emit(cmd)
 
-# Timeline page
+    def append_output(self, text: str, is_error: bool = False):
+        if is_error: self._output.appendPlainText(f"[ERR] {text}")
+        else: self._output.appendPlainText(text)
+        self._output.moveCursor(QTextCursor.End)
+
+    def _export(self):
+        from PyQt5.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(self, "Export Terminal Log", "aria_terminal.txt", "Text Files (*.txt)")
+        if path:
+            with open(path, "w") as f: f.write(self._output.toPlainText())
+# Timeline Page
 class TimelinePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 16, 16, 16)
 
-        header = QLabel("Execution Timeline")
-        header.setObjectName("pageTitle")
-        header.setFont(QFont("Consolas", 10, QFont.Bold))
+        header = QLabel("📋  Timeline")
+        header.setObjectName("SectionHeader")
         layout.addWidget(header)
 
-        self.timeline_display = QTextEdit()
-        self.timeline_display.setObjectName("terminalDisplay")
-        self.timeline_display.setReadOnly(True)
-        self.timeline_display.setFont(QFont("Consolas", 9))
-        layout.addWidget(self.timeline_display, stretch=1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+
+        self._container = QWidget()
+        self._container_layout = QVBoxLayout(self._container)
+        self._container_layout.setContentsMargins(0, 0, 0, 0)
+        self._container_layout.addStretch()
+
+        scroll.setWidget(self._container)
+        layout.addWidget(scroll, 1)
 
         clear_btn = QPushButton("Clear Timeline")
-        clear_btn.setObjectName("termClearBtn")
-        clear_btn.setFont(QFont("Consolas", 9))
-        clear_btn.setFixedWidth(130)
-        clear_btn.clicked.connect(self.timeline_display.clear)
+        clear_btn.clicked.connect(self._clear)
         layout.addWidget(clear_btn)
+        self._scroll = scroll
 
-    def add_entry(self, timestamp: str, action: str, status: str, dim: str):
-        icon  = "✔" if status == "ok" else "✖"
-        color = "#4caf50" if status == "ok" else "#f44336"
-        self.timeline_display.append(
-            f"<span style='color:{dim};'>[{timestamp}]</span> "
-            f"<span style='color:{color};'>{icon}</span> "
-            f"<span style='color:#aaa;'>{action}</span>"
-        )
-        self.timeline_display.moveCursor(QTextCursor.End)
+    def add_event(self, action: str, detail: str):
+        ts  = datetime.datetime.now().strftime("%H:%M:%S")
 
+        entry = QWidget()
+        entry.setObjectName("TimelineEntry")
+        row = QHBoxLayout(entry)
+        row.setContentsMargins(8, 4, 8, 4)
 
-# Warnings page
+        ts_label = QLabel(ts)
+        ts_label.setObjectName("TimelineTime")
+        ts_label.setFixedWidth(60)
+
+        icon = {"command": "⌨️", "intent": "🎯", "browser": "🌐",
+                "search": "🔍", "image_gen": "🎨"}.get(action, "•")
+
+        text_label = QLabel(f"{icon} [{action}] {detail}")
+        text_label.setObjectName("TimelineText")
+        text_label.setWordWrap(True)
+
+        row.addWidget(ts_label)
+        row.addWidget(text_label, 1)
+
+        self._container_layout.insertWidget(self._container_layout.count() - 1, entry)
+        QTimer.singleShot(50, lambda: self._scroll.verticalScrollBar().setValue(
+            self._scroll.verticalScrollBar().maximum()
+        ))
+
+    def _clear(self):
+        while self._container_layout.count() > 1:
+            item = self._container_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+# Warnings Page
 class WarningsPage(QWidget):
-    cleared = pyqtSignal()
+    count_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 16, 16, 16)
 
-        # Header row
-        header_row = QHBoxLayout()
-        header = QLabel("System Warnings")
-        header.setObjectName("pageTitle")
-        header.setFont(QFont("Consolas", 10, QFont.Bold))
-        header_row.addWidget(header)
-        header_row.addStretch()
+        header = QLabel("⚠️  Warnings & Health Alerts")
+        header.setObjectName("SectionHeader")
+        layout.addWidget(header)
 
-        self._count_label = QLabel("0 alerts")
-        self._count_label.setObjectName("confidenceLabel")
-        self._count_label.setFont(QFont("Consolas", 8))
-        header_row.addWidget(self._count_label)
-        layout.addLayout(header_row)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
 
-        # Warnings display
-        self.display = QTextEdit()
-        self.display.setObjectName("terminalDisplay")
-        self.display.setReadOnly(True)
-        self.display.setFont(QFont("Consolas", 9))
-        layout.addWidget(self.display, stretch=1)
+        self._container = QWidget()
+        self._container_layout = QVBoxLayout(self._container)
+        self._container_layout.setContentsMargins(0, 0, 0, 0)
+        self._container_layout.addStretch()
 
-        # Bottom bar
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(8)
+        scroll.setWidget(self._container)
+        layout.addWidget(scroll, 1)
 
-        clear_btn = QPushButton("Clear All")
-        clear_btn.setObjectName("termClearBtn")
-        clear_btn.setFont(QFont("Consolas", 9))
-        clear_btn.setFixedWidth(100)
+        clear_btn = QPushButton("Clear All Warnings")
+        clear_btn.setObjectName("ClearWarningsBtn")
         clear_btn.clicked.connect(self._clear)
-        bottom_row.addWidget(clear_btn)
+        layout.addWidget(clear_btn)
+        self._count = 0
 
-        bottom_row.addStretch()
+    def add_warning(self, severity: str, message: str):
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
 
-        self._last_label = QLabel("No warnings yet")
-        self._last_label.setObjectName("confidenceLabel")
-        self._last_label.setFont(QFont("Consolas", 8))
-        bottom_row.addWidget(self._last_label)
+        entry = QWidget()
+        obj_map = {"error": "WarningEntryError", "warning": "WarningEntryWarning"}
+        entry.setObjectName(obj_map.get(severity, "WarningEntryInfo"))
 
-        layout.addLayout(bottom_row)
+        row = QHBoxLayout(entry)
+        row.setContentsMargins(8, 6, 8, 6)
 
-        self._alert_count = 0
+        icon_map = {"error": "🔴", "warning": "🟡", "info": "🔵"}
+        icon = QLabel(icon_map.get(severity, "•"))
+        icon.setFixedWidth(20)
 
-    def add_warning(self, message: str, severity: str):
-        self._alert_count += 1
-        timestamp = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
+        text = QLabel(message)
+        text.setWordWrap(True)
 
-        if severity == "critical":
-            icon  = "✖ CRITICAL"
-            color = "#f44336"
-        else:
-            icon  = "⚠ WARNING"
-            color = "#ffcc00"
+        ts_label = QLabel(ts)
+        ts_label.setObjectName("TimelineTime")
 
-        html = (
-            f"<div style='margin-bottom:10px;border-left:3px solid {color};"
-            f"padding-left:10px;'>"
-            f"<span style='color:#555;font-size:7.5pt'>{timestamp}</span>&nbsp;&nbsp;"
-            f"<span style='color:{color};font-weight:bold;font-size:8pt'>{icon}</span>"
-            f"<div style='color:#ccc;margin-top:4px;font-size:9pt'>{message}</div>"
-            f"</div>"
-        )
-        self.display.append(html)
-        self.display.moveCursor(QTextCursor.End)
-        self._count_label.setText(f"{self._alert_count} alert{'s' if self._alert_count != 1 else ''}")
-        self._last_label.setText(f"Last: {timestamp}")
+        row.addWidget(icon)
+        row.addWidget(text, 1)
+        row.addWidget(ts_label)
+
+        self._container_layout.insertWidget(self._container_layout.count() - 1, entry)
+
+        self._count += 1
+        self.count_changed.emit(self._count)
 
     def _clear(self):
-        self.display.clear()
-        self._alert_count = 0
-        self._count_label.setText("0 alerts")
-        self._last_label.setText("No warnings yet")
-        self.cleared.emit()
+        while self._container_layout.count() > 1:
+            item = self._container_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        self._count = 0
+        self.count_changed.emit(0)

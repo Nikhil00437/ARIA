@@ -1,373 +1,158 @@
-import subprocess, os, re, json
-from typing import Optional
-from datetime import datetime
-try:
-    import winreg
-    HAS_WINREG = True
-except ImportError:
-    HAS_WINREG = False
-
-# Dangerous command patterns requiring confirmation
-CONFIRMATION_PATTERNS = [
-    (r"\bdel\b",      "delete files"),
-    (r"\brmdir\b",    "remove directory"),
-    (r"\brd\b",       "remove directory"),
-    (r"\btaskkill\b", "kill a process"),
-    (r"\bformat\b",   "format a drive"),
-    (r"\bshutdown\b", "shutdown/restart system"),
-    (r"\bpowershell.*remove-item\b", "delete files via PowerShell"),
-]
-
-BLOCKED_PATTERNS = [
-    r"rm\s+-rf",
-    r"mkfs",
-    r":\(\)\{",
-    r"shutdown\s+/[srh]",
-    r"shutdown\s+-[srh]",
-    r"reboot",
-    r"format\s+[a-z]:",
-    r"del\s+/f\s+/s\s+/q\s+[a-z]:\\",
-    r"rd\s+/s\s+/q\s+[a-z]:\\",
-    r"rmdir\s+/s\s+/q\s+[a-z]:\\",
-    r"reg\s+delete\s+hklm",
-    r"powershell.*remove-item.*recurse.*c:\\",
-]
-
-# Natural Language → PowerShell mapping
-NL_TO_POWERSHELL = {
-    r"(show|list|top)\s+(memory|ram)\s*(apps?|processes?|usage)?": (
-        "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, @{N='Memory(MB)';E={[math]::Round($_.WorkingSet64/1MB,2)}} | Format-Table -AutoSize"
-    ),
-    r"(show|list|running)?\s*services?\s*(not\s*running|stopped)": (
-        "Get-Service | Where-Object {$_.Status -eq 'Stopped'} | Select-Object Name, DisplayName, Status | Format-Table -AutoSize"
-    ),
-    r"(show|list|running)\s*services?": (
-        "Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object Name, DisplayName | Format-Table -AutoSize"
-    ),
-    r"(show|disk|drive)\s*(space|usage|free)?": (
-        "Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N='Used(GB)';E={[math]::Round(($_.Used)/1GB,2)}}, @{N='Free(GB)';E={[math]::Round(($_.Free)/1GB,2)}} | Format-Table -AutoSize"
-    ),
-    r"(top|high)\s*(cpu|processor)\s*(processes?|apps?)?": (
-        "Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 Name, CPU, @{N='Memory(MB)';E={[math]::Round($_.WorkingSet64/1MB,2)}} | Format-Table -AutoSize"
-    ),
-    r"(show|list)\s*(startup|boot)\s*(items?|programs?|apps?)?": (
-        "Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location | Format-Table -AutoSize"
-    ),
-    r"(show|list)\s*(open|active|listening)\s*ports?": (
-        "Get-NetTCPConnection | Where-Object {$_.State -eq 'Listen'} | Select-Object LocalAddress, LocalPort, State | Sort-Object LocalPort | Format-Table -AutoSize"
-    ),
-    r"(show|list)\s*(environment|env)\s*(variables?)?": (
-        "Get-ChildItem Env: | Select-Object Name, Value | Format-Table -AutoSize"
-    ),
-    r"(show|list)\s*(recent|last)\s*(events?|errors?|logs?)": (
-        "Get-EventLog -LogName System -Newest 20 -EntryType Error | Select-Object TimeGenerated, Source, Message | Format-Table -AutoSize"
-    ),
-    r"(show|list)\s*(users?|accounts?)": (
-        "Get-LocalUser | Select-Object Name, Enabled, LastLogon | Format-Table -AutoSize"
-    ),
-    r"(show|list)\s*(wifi|wireless)\s*(profiles?|networks?|passwords?)?": (
-        "netsh wlan show profiles"
-    ),
-    r"flush\s*(dns|cache)": (
-        "ipconfig /flushdns"
-    ),
-    r"(show|list)\s*(installed|apps?|programs?|software)": (
-        "Get-ItemProperty HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* | Select-Object DisplayName, DisplayVersion, Publisher | Where-Object {$_.DisplayName} | Sort-Object DisplayName | Format-Table -AutoSize"
-    ),
-}
-
-# Offline fallback rules 
-OFFLINE_RULES = {
-    r"\btime\b":                              ("time", None, "Get current time"),
-    r"\bopen\s+notepad\b":                    ("command", "start notepad.exe", "Open Notepad"),
-    r"\bopen\s+calc(ulator)?\b":              ("command", "start calc.exe", "Open Calculator"),
-    r"\bopen\s+(explorer|file\s*explorer)\b": ("command", "start explorer.exe", "Open File Explorer"),
-    r"\bopen\s+cmd\b":                        ("command", "start cmd", "Open Command Prompt"),
-    r"\bopen\s+(vs\s*code|code)\b":           ("quick_open", "vscode", "Open VS Code"),
-    r"\bopen\s+youtube\b":                    ("quick_open", "youtube", "Open YouTube"),
-    r"\bopen\s+google\b":                     ("quick_open", "google", "Open Google"),
-    r"\bdir\b|\blist\s+files?\b":             ("command", "dir %USERPROFILE%", "List files"),
-    r"\bip\s*(config|address)?\b":            ("command", "ipconfig", "Show network info"),
-    r"\btask\s*list\b|\bprocesses?\b":        ("command", "tasklist", "List processes"),
-    r"\bsearch\s+pdf\b":                      ("search", "pdf", "Search PDF files"),
-    r"\bsearch\s+py\b":                       ("search", "py", "Search Python files"),
-    r"\bplay\s+music\b":                      ("music", "play", "Play music"),
-    r"\bshow\s+apps?\b":                      ("show_apps", None, "Show installed apps"),
-    r"\bsystem\s*info\b":                     ("command", "systeminfo", "Show system information"),
-    # smart_search offline shortcuts
-    r"search\s+youtube\s+(for\s+)?\S":        ("smart_search", None, "YouTube search"),
-    r"(find|search)\s+\S.+\s+on\s+github\b":  ("smart_search", None, "GitHub search"),
-    r"(find|search|look\s*up)\s+\S.+\s+on\s+stackoverflow\b": ("smart_search", None, "StackOverflow search"),
-    r"\bgoogle\s+(how|what|why|who|when|where)\b": ("smart_search", None, "Google query"),
-    r"\bopen\s+github\s+\w":                  ("smart_search", None, "GitHub profile"),
-    r"\bopen\s+youtube\s+@":                  ("smart_search", None, "YouTube channel"),
-    r"\bsearch\s+(google|bing|duckduckgo)\s+(for\s+)?\S": ("smart_search", None, "Search engine query"),
-}
-
-# Error diagnosis patterns
-ERROR_DIAGNOSES = {
-    r"access\s+is\s+denied":             {
-        "cause": "Insufficient permissions",
-        "suggestions": ["Run the application as Administrator", "Check file/folder permissions", "Disable UAC temporarily if safe"]
-    },
-    r"the\s+system\s+cannot\s+find":     {
-        "cause": "File or path not found",
-        "suggestions": ["Verify the file/path exists", "Check for typos in the path", "Use full absolute path"]
-    },
-    r"is\s+not\s+recognized":            {
-        "cause": "Command or executable not found in PATH",
-        "suggestions": ["Install the application", "Add its folder to system PATH", "Use the full path to the executable"]
-    },
-    r"the\s+process\s+cannot\s+access":  {
-        "cause": "File locked by another process",
-        "suggestions": ["Close other apps using the file", "Restart the locking process", "Use Resource Monitor to identify the lock"]
-    },
-    r"not\s+enough\s+memory|out\s+of\s+memory": {
-        "cause": "Insufficient RAM or virtual memory",
-        "suggestions": ["Close memory-heavy applications", "Increase virtual memory size", "Restart the system to free memory"]
-    },
-    r"timed\s+out":                      {
-        "cause": "Operation exceeded time limit",
-        "suggestions": ["Try again with a longer timeout", "Check if the target service is running", "Verify network connectivity"]
-    },
-    r"already\s+exists":                 {
-        "cause": "File or folder already exists at target",
-        "suggestions": ["Delete or rename the existing item first", "Use /Y flag to force overwrite (if safe)"]
-    },
-    r"syntax\s+(is\s+)?incorrect":       {
-        "cause": "Invalid command syntax",
-        "suggestions": ["Check command spelling and flags", "Run `command /?` for help", "Verify all required arguments are present"]
-    },
-}
-
-KNOWN_APP_DIRS = [
-    r"C:\Program Files",
-    r"C:\Program Files (x86)",
-    r"C:\Windows\System32",
-    r"C:\Windows",
-]
-
-# Safety helpers
-def requires_confirmation(command: str) -> Optional[str]:
-    lower = command.lower()
-    for pattern, description in CONFIRMATION_PATTERNS:
-        if re.search(pattern, lower):
-            return description
-    return None
-
-def is_blocked(command: str) -> Optional[str]:
-    lower = command.lower()
+import re, os, subprocess, winreg, psutil, datetime, webbrowser, urllib.parse
+from typing import Optional, Tuple
+from constants import BLOCKED_PATTERNS, CONFIRM_PATTERNS, POWERSHELL_PATTERNS
+# Command Safety
+def is_blocked(command: str) -> bool:
+    cmd_lower = command.lower().strip()
     for pattern in BLOCKED_PATTERNS:
-        if re.search(pattern, lower):
-            return pattern
-    return None
+        if re.search(pattern, cmd_lower, re.I): return True
+    return False
 
-# PowerShell translator
-def translate_to_powershell(user_input: str) -> Optional[str]:
-    lower = user_input.lower().strip()
-    for pattern, ps_cmd in NL_TO_POWERSHELL.items():
-        if re.search(pattern, lower):
-            return ps_cmd
+def needs_confirmation(command: str) -> bool:
+    cmd_lower = command.lower().strip()
+    for pattern in CONFIRM_PATTERNS:
+        if re.search(pattern, cmd_lower, re.I): return True
+    return False
+# NL → PowerShell
+def nl_to_powershell(text: str) -> Optional[str]:
+    text_lower = text.lower().strip()
+    for pattern, cmd in POWERSHELL_PATTERNS.items():
+        if re.search(pattern, text_lower): return cmd
     return None
-
-def run_powershell(ps_command: str, timeout: int = 20) -> str:
+# App / File Resolver
+_COMMON_APPS = {
+    "notepad":    "notepad.exe",
+    "calc":       "calc.exe",
+    "calculator": "calc.exe",
+    "paint":      "mspaint.exe",
+    "wordpad":    "wordpad.exe",
+    "explorer":   "explorer.exe",
+    "terminal":   "wt.exe",
+    "cmd":        "cmd.exe",
+    "powershell": "powershell.exe",
+    "task manager": "taskmgr.exe",
+    "taskmgr":    "taskmgr.exe",
+    "chrome":     "chrome.exe",
+    "firefox":    "firefox.exe",
+    "edge":       "msedge.exe",
+    "vlc":        "vlc.exe",
+    "code":       "code.exe",
+    "vscode":     "code.exe",
+    "spotify":    "spotify.exe",
+    "discord":    "discord.exe",
+    "slack":      "slack.exe",
+    "obs":        "obs64.exe",
+    "steam":      "steam.exe",
+}
+_COMMON_PATHS = [
+    os.environ.get("PROGRAMFILES", "C:\\Program Files"),
+    os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
+    os.environ.get("LOCALAPPDATA", ""),
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs"),
+    os.environ.get("APPDATA", ""),
+]
+def resolve_app(name: str) -> Optional[str]:
+    name_lower = name.lower().strip()
+    # Known map
+    if name_lower in _COMMON_APPS: return _COMMON_APPS[name_lower]
+    # Search Program Files
+    for base in _COMMON_PATHS:
+        if not base: continue
+        for root, dirs, files in os.walk(base):
+            for f in files:
+                if f.lower().startswith(name_lower) and f.endswith(".exe"): return os.path.join(root, f)
+            # Limit depth for performance
+            if root.count(os.sep) - base.count(os.sep) > 3:
+                del dirs[:]
+    # Windows Registry App Paths
     try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_command],
-            capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace"
-        )
-        output = ""
-        if result.stdout.strip():
-            output += result.stdout.strip()
-        if result.stderr.strip():
-            output += ("\n" if output else "") + result.stderr.strip()
-        return output if output else "(no output)"
-    except subprocess.TimeoutExpired:
-        return f"⏱️ PowerShell command timed out after {timeout}s"
-    except Exception as e:
-        return f"❌ PowerShell error: {e}"
-
-# Offline fallback classifier
-def offline_classify(user_input: str) -> Optional[dict]:
-    lower = user_input.lower().strip()
-    for pattern, (mode, action, reason) in OFFLINE_RULES.items():
-        if re.search(pattern, lower):
-            return {
-                "mode": mode,
-                "confidence": 0.85,
-                "reason": reason,
-                "action": action,
-                "offline": True
-            }
-    return None
-
-# Error diagnosis
-def diagnose_error(output: str) -> Optional[dict]:
-    lower = output.lower()
-    for pattern, diagnosis in ERROR_DIAGNOSES.items():
-        if re.search(pattern, lower):
-            return diagnosis
-    return None
-
-def format_error_diagnosis(output: str, command: str = "") -> str:
-    diagnosis = diagnose_error(output)
-    if not diagnosis:
-        return output
-    lines = [output, "", "🔍 Error Diagnosis:"]
-    lines.append(f"  Likely cause: {diagnosis['cause']}")
-    lines.append("  Suggestions:")
-    for s in diagnosis["suggestions"]:
-        lines.append(f"    • {s}")
-    return "\n".join(lines)
-
-# App/file resolution
-def find_app(app_name: str) -> Optional[str]:
-    exe = app_name if app_name.lower().endswith(".exe") else f"{app_name}.exe"
-    try:
-        result = subprocess.run(
-            ["where", exe], capture_output=True, text=True, check=False, timeout=5
-        )
-        if result.stdout.strip():
-            return result.stdout.strip().splitlines()[0]
+        reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
+            for candidate in [name_lower, name_lower + ".exe"]:
+                try:
+                    with winreg.OpenKey(key, candidate) as app_key:
+                        path, _ = winreg.QueryValueEx(app_key, "")
+                        if path: return path
+                except FileNotFoundError: continue
     except Exception: pass
-    if HAS_WINREG:
-        for hive in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
-            try:
-                key = winreg.OpenKey(
-                    hive,
-                    rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}",
-                )
-                path, _ = winreg.QueryValueEx(key, "")
-                if path and os.path.exists(path):
-                    return path
-            except Exception: pass
-    start_menus = [
-        os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs"),
-        os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"),
+    # Start Menu search
+    start_menu_dirs = [
+        os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs"),
+        r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
     ]
-    base_name = os.path.splitext(exe)[0].lower()
-    for start_menu in start_menus:
-        try:
-            for root, _, files in os.walk(start_menu):
-                for f in files:
-                    if f.lower().startswith(base_name) and f.endswith(".lnk"):
-                        return os.path.join(root, f)
-        except Exception: pass
-    for dir_path in KNOWN_APP_DIRS:
-        candidate = os.path.join(dir_path, exe)
-        if os.path.exists(candidate):
-            return candidate
+    for smd in start_menu_dirs:
+        for root, _, files in os.walk(smd):
+            for f in files:
+                if name_lower in f.lower() and f.endswith(".lnk"): return os.path.join(root, f)
     return None
-
-def find_file(filename: str, search_root: str = r"C:\Users") -> Optional[str]:
-    try:
-        result = subprocess.run(
-            ["where", "/r", search_root, filename],
-            capture_output=True, text=True, timeout=20,
-        )
-        if result.stdout.strip():
-            return result.stdout.strip().splitlines()[0]
-    except Exception: pass
+# Error Diagnosis
+_ERROR_DIAGNOSES = [
+    (r"access is denied",         "Insufficient permissions. Try running as administrator."),
+    (r"file not found|no such file", "The file or path doesn't exist. Check spelling or location."),
+    (r"is not recognized",        "Command not found. The program may not be installed or not in PATH."),
+    (r"cannot find the path",     "Path doesn't exist. Verify the directory structure."),
+    (r"out of memory",            "System is low on RAM. Close other applications."),
+    (r"permission denied",        "Insufficient permissions. Try running as administrator."),
+    (r"the process cannot access", "File is locked by another process."),
+    (r"network path was not found", "Network share is unavailable. Check connection."),
+    (r"disk is full|not enough space", "Disk is full. Free up space before retrying."),
+    (r"syntax error|unexpected token", "Command syntax error. Check the command format."),
+    (r"execution policy",         "PowerShell execution policy blocked the script. Run: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser"),
+    (r"cannot be loaded because running scripts is disabled", "Enable scripts: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser"),
+]
+def diagnose_error(output: str) -> Optional[str]:
+    output_lower = output.lower()
+    for pattern, diagnosis in _ERROR_DIAGNOSES:
+        if re.search(pattern, output_lower): return diagnosis
     return None
-
-def resolve_command(command: str) -> str:
-    def resolve_exe(match):
-        exe_name = match.group(0)
-        if "\\" in exe_name:
-            return exe_name
-        full_path = find_app(exe_name)
-        return f'"{full_path}"' if full_path else exe_name
-
-    command = re.sub(r'(?<!["\\/])\b[\w.-]+\.exe\b', resolve_exe, command, flags=re.IGNORECASE)
-    paths = re.findall(r'[A-Za-z]:\\[^\s"]+', command)
-    for path in paths:
-        clean_path = path.strip('"')
-        if not os.path.exists(clean_path):
-            filename = os.path.basename(clean_path)
-            found = find_file(filename)
-            if found:
-                command = command.replace(path, f'"{found}"')
-    return command
-
-# Main executor
-def execute_command(command: str, timeout: int = 20, skip_confirmation_check: bool = False) -> str:
-    command = command.strip()
-    # Safety check
-    blocked = is_blocked(command)
-    if blocked:
-        return f"⛔ Blocked: command matches dangerous pattern `{blocked}`"
-
-    # Confirmation check (caller handles the actual confirmation flow)
-    if not skip_confirmation_check:
-        needs_confirm = requires_confirmation(command)
-        if needs_confirm:
-            return f"__NEEDS_CONFIRMATION__:{needs_confirm}"
-
-    command = resolve_command(command)
-    if command.lower().startswith("start "):
-        if not command.lower().startswith('start ""'):
-            command = re.sub(r'^start\s+', 'start "" ', command, count=1, flags=re.IGNORECASE)
-
+# System Snapshot
+def system_snapshot() -> dict:
     try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True,
-            timeout=timeout, encoding="utf-8", errors="replace",
-        )
-        output = ""
-        if result.stdout.strip():
-            output += result.stdout.strip()
-        if result.stderr.strip():
-            output += ("\n" if output else "") + result.stderr.strip()
-        raw = output if output else "(command ran, no output)"
+        cpu    = psutil.cpu_percent(interval=0.5)
+        mem    = psutil.virtual_memory()
+        disk   = psutil.disk_usage("C:\\") if os.name == "nt" else psutil.disk_usage("/")
+        boot   = datetime.datetime.fromtimestamp(psutil.boot_time())
+        uptime = datetime.datetime.now() - boot
+        return {
+            "cpu_percent":      cpu,
+            "ram_used_gb":      round(mem.used  / 1e9, 2),
+            "ram_total_gb":     round(mem.total / 1e9, 2),
+            "ram_percent":      mem.percent,
+            "disk_used_gb":     round(disk.used / 1e9, 2),
+            "disk_total_gb":    round(disk.total/ 1e9, 2),
+            "disk_percent":     disk.percent,
+            "uptime_hours":     round(uptime.total_seconds() / 3600, 1),
+            "process_count":    len(psutil.pids()),
+        }
+    except Exception as e: return {"error": str(e)}
 
-        # Auto-diagnose errors
-        if result.returncode != 0 or any(kw in raw.lower() for kw in ("error", "denied", "cannot", "not recognized", "failed")):
-            return format_error_diagnosis(raw, command)
-        return raw
-
-    except subprocess.TimeoutExpired:
-        return f"⏱️ Command timed out after {timeout}s"
-    except FileNotFoundError:
-        return "❌ Command not found — check the executable name"
-    except Exception as e:
-        return f"❌ Execution error: {e}"
-
-def get_system_snapshot() -> dict:
-    snapshot = {}
-    try:
-        result = subprocess.run(
-            "wmic os get Caption,Version /value",
-            shell=True, capture_output=True, text=True, timeout=5
-        )
-        for line in result.stdout.strip().splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                snapshot[k.strip()] = v.strip()
-    except Exception: pass
-    try:
-        result = subprocess.run("hostname", shell=True, capture_output=True, text=True, timeout=3)
-        snapshot["Hostname"] = result.stdout.strip()
-    except Exception: pass
-    return snapshot
-
-# System health monitor helper
-def get_health_alerts() -> list[dict]:
+def format_snapshot(snap: dict) -> str:
+    if "error" in snap: return f"System snapshot unavailable: {snap['error']}"
+    return (
+        f"**System Status**\n"
+        f"• CPU: {snap['cpu_percent']}%\n"
+        f"• RAM: {snap['ram_used_gb']} / {snap['ram_total_gb']} GB ({snap['ram_percent']}%)\n"
+        f"• Disk (C:): {snap['disk_used_gb']} / {snap['disk_total_gb']} GB ({snap['disk_percent']}%)\n"
+        f"• Uptime: {snap['uptime_hours']}h | Processes: {snap['process_count']}"
+    )
+# Health Alert Generator
+def generate_health_alerts(snap: dict) -> list:
     alerts = []
-    try:
-        # RAM
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-             "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 1 Name, @{N='MB';E={[math]::Round($_.WorkingSet64/1MB,1)}} | ConvertTo-Json"],
-            capture_output=True, text=True, timeout=8
-        )
-        if result.stdout.strip():
-            data = json.loads(result.stdout.strip())
-            if data.get("MB", 0) > 1500:
-                alerts.append({
-                    "type": "memory",
-                    "message": f"⚠ {data['Name']} using {data['MB']} MB memory",
-                    "severity": "warning" if data["MB"] < 3500 else "critical"
-                })
-    except Exception: pass
+    if snap.get("cpu_percent", 0) > 90: alerts.append(("error",   f"CPU critical: {snap['cpu_percent']}%"))
+    elif snap.get("cpu_percent", 0) > 75: alerts.append(("warning", f"CPU high: {snap['cpu_percent']}%"))
+    if snap.get("ram_percent", 0) > 90: alerts.append(("error",   f"RAM critical: {snap['ram_percent']}%"))
+    elif snap.get("ram_percent", 0) > 80: alerts.append(("warning", f"RAM high: {snap['ram_percent']}%"))
+    if snap.get("disk_percent", 0) > 90: alerts.append(("error",   f"Disk almost full: {snap['disk_percent']}%"))
+    elif snap.get("disk_percent", 0) > 80: alerts.append(("warning", f"Disk usage high: {snap['disk_percent']}%"))
     return alerts
+# Music playback (via default player)
+def play_music(query: str) -> Tuple[bool, str]:
+    q = urllib.parse.quote(query)
+    # Try Spotify URI first, fall back to YouTube
+    try:
+        subprocess.Popen(["spotify", f"spotify:search:{query}"], shell=True)
+        return True, f"Opening Spotify for: {query}"
+    except Exception:
+        url = f"https://www.youtube.com/results?search_query={q}"
+        webbrowser.open(url)
+        return True, f"Searching YouTube Music for: {query}"
