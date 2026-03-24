@@ -226,7 +226,17 @@ class ChatEngine:
         def _run():
             self._signals.status_update.emit("Looking up Wikipedia...")
             result = self._llm.wikipedia_lookup(text)
-            self._emit(result)
+            # If Wikipedia found nothing, fall back to LLM chat
+            if "No article found" in result or "lookup failed" in result:
+                messages = [{"role": m["role"], "content": m["content"]} for m in history[-20:]]
+                messages.append({"role": "user", "content": text})
+                full_response = ""
+                for chunk in self._llm.chat_stream(messages):
+                    self._signals.chat_stream_chunk.emit(chunk)
+                    full_response += chunk
+                self._signals.chat_stream_done.emit()
+                self._signals.chat_response.emit("assistant", full_response)
+            else: self._emit(result)
             self._signals.status_update.emit("Ready")
         threading.Thread(target=_run, daemon=True).start()
 
