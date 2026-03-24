@@ -142,9 +142,11 @@ ARIA monitors your interaction patterns and proposes targeted configuration chan
 
 ## Themes
 - **Cyber** — Dark green terminal aesthetic (default)
-- **Minimal** — Light blue clean design
+- **Minimal** — Light blue clean design  
 - **Classic** — Monochrome dark
 
+> yeah don't try minimal if you're used to dark mode
+> i tried and my i'm blind for like 20 sec
 ---
 
 ## Notes
