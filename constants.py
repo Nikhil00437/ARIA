@@ -1,7 +1,7 @@
 # LM Studio
 LM_STUDIO_BASE_URL   = "http://localhost:1234/v1"
-CHAT_MODEL           = "qwen3-vl-8b-instruct"
-CLASSIFIER_MODEL     = "qwen3-vl-8b-instruct"
+CHAT_MODEL           = "qwen3.5-9b-uncensored-hauhaucs-aggressive"
+CLASSIFIER_MODEL     = "intent"
 LLM_TIMEOUT          = 30
 LLM_CHAT_TEMPERATURE = 0.7
 LLM_CLASS_TEMPERATURE= 0.1
@@ -13,7 +13,7 @@ COL_COMMANDS = "command_logs"
 COL_SELFMOD  = "selfmod_ledger"
 COL_PROFILE  = "behavioral_profile"
 
-# ── Themes ──────────────────────────────────────────────────────────────────
+# Themes 
 THEMES = {
     "cyber": {
         "bg":        "#07090f",
