@@ -1,19 +1,16 @@
 import psutil
-from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QComboBox, QFrame, QSizePolicy
-)
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox, QFrame, QSizePolicy
 from PyQt5.QtCore import QTimer, pyqtSignal, Qt
 from constants import THEMES
 
-
 class Sidebar(QWidget):
-    # ── Signals ──────────────────────────────────────────────────────────────
+    # Signals
     nav_clicked    = pyqtSignal(str)
     theme_changed  = pyqtSignal(str)
     voice_toggled  = pyqtSignal(bool)
     silent_toggled = pyqtSignal(bool)
     mic_pressed    = pyqtSignal()
+    fabric_quick   = pyqtSignal(str)  # emits "/fabric list" or a quick command
 
     PAGES = [
         ("💬", "Chat",     "chat"),
@@ -36,7 +33,7 @@ class Sidebar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Logo ─────────────────────────────────────────────────────────────
+        # Logo
         logo_area = QWidget()
         logo_area.setObjectName("SidebarLogoArea")
         logo_layout = QVBoxLayout(logo_area)
@@ -51,8 +48,7 @@ class Sidebar(QWidget):
         logo_layout.addWidget(logo)
         logo_layout.addWidget(tagline)
         layout.addWidget(logo_area)
-
-        # ── Nav buttons ──────────────────────────────────────────────────────
+        # Nav buttons
         nav_section = QWidget()
         nav_section.setObjectName("NavSection")
         nav_layout = QVBoxLayout(nav_section)
@@ -110,7 +106,24 @@ class Sidebar(QWidget):
         layout.addWidget(self._mic_btn)
 
         layout.addWidget(self._hsep())
-        # Theme
+        # Fabric section
+        fabric_section = QLabel("FABRIC")
+        fabric_section.setObjectName("SidebarSection")
+        layout.addWidget(fabric_section)
+
+        self._fabric_status = QLabel("◌  Checking...")
+        self._fabric_status.setObjectName("SysInfo")
+        layout.addWidget(self._fabric_status)
+
+        self._fabric_btn = QPushButton("🧵  Fabric Patterns")
+        self._fabric_btn.setObjectName("NavBtn")
+        self._fabric_btn.clicked.connect(self._on_fabric_click)
+        layout.addWidget(self._fabric_btn)
+
+        # Check fabric availability
+        self._check_fabric()
+
+        layout.addWidget(self._hsep())
         theme_section = QLabel("APPEARANCE")
         theme_section.setObjectName("SidebarSection")
         layout.addWidget(theme_section)
@@ -193,6 +206,21 @@ class Sidebar(QWidget):
         except Exception:
             self._cpu_label.setText("CPU  ·  –")
             self._ram_label.setText("RAM  ·  –")
+    # Fabric
+    def _check_fabric(self):
+        import threading
+        def _run():
+            from fabric_client import FabricClient
+            fc = FabricClient()
+            if fc.available:
+                count = len(fc.list_patterns())
+                self._fabric_status.setText(f"✅  {count} patterns")
+            else: self._fabric_status.setText("❌  Not found")
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_fabric_click(self):
+        self.fabric_quick.emit("/fabric list")
+
     # Helpers
     def _hsep(self) -> QWidget:
         sep = QFrame()
