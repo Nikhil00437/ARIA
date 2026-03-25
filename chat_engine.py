@@ -3,7 +3,8 @@ from typing import Optional
 from extract import nl_to_powershell, system_snapshot, format_snapshot, play_music, needs_confirmation
 from executor import CommandExecutor
 from image_generation import generate_image_async
-from constants import SUGGESTIONS
+from constants import SUGGESTIONS, FABRIC_QUICK_PATTERNS
+from fabric_client import FabricClient, FABRIC_PATTERNS
 
 class ChatEngine:
     def __init__(self, db, llm_client, signals, selfmod_controller=None, voice_engine=None):
@@ -13,9 +14,9 @@ class ChatEngine:
         self._selfmod    = selfmod_controller
         self._voice      = voice_engine
         self._executor   = CommandExecutor()
+        self._fabric     = FabricClient()
         # Pending confirmation state
         self._confirm_pending: Optional[dict] = None
-
         # Output mode (can be overridden by selfmod)
         self._message_count = 0
 
@@ -52,6 +53,7 @@ class ChatEngine:
             "powershell":   self._handle_powershell,
             "explain":      self._handle_explain,
             "image_gen":    self._handle_image_gen,
+            "fabric":       self._handle_fabric,
         }.get(mode, self._handle_chat)(text, session_id, history)
         # Selfmod milestone check
         if self._selfmod and self._message_count % 15 == 0: self._selfmod.analyze_async(session_id)
@@ -66,11 +68,11 @@ class ChatEngine:
                 self._emit("No command history for this session.")
                 return
             lines = [f"`{i+1}.` `{c['command']}` — {'✅' if c['success'] else '❌'} {str(c['timestamp'])[:16]}" for i, c in enumerate(cmds)]
-            self._emit("**Recent commands:**\n" + "\n".join(lines))
+            self._emit("**Recent commands:**\n\n" + "\n\n".join(lines))
             return
 
         if cmd == "/sessions":
-            sessions = self._db.list_sessions(limit=10)
+            sessions = self._db.list_sessions(limit = 10000)
             if not sessions:
                 self._emit("No previous sessions found.")
                 return
@@ -78,9 +80,9 @@ class ChatEngine:
             for i, s in enumerate(sessions):
                 ts = str(s.get("created", ""))[:16]
                 sid = s.get("session_id", "")[:8]
-                prefix = "→" if sid == session_id[:8] else f"{i+1}."
+                prefix = "1." if sid == session_id[:8] else f"{i+1}."
                 lines.append(f"`{prefix}` `{sid}...` — {ts}")
-            self._emit("**Previous Sessions:**\n" + "\n".join(lines) + "\n\nType `/session N` to switch to a session.")
+            self._emit("**Previous Sessions:**\n\n" + "\n\n".join(lines) + "\n\n\n\nType `/session N` to switch to a session.")
             return
 
         m = re.match(r"/session\s+(\d+)", cmd)
@@ -118,10 +120,8 @@ class ChatEngine:
                 if proposals:
                     self._signals.selfmod_proposal.emit(proposals)
                     self._emit(f"🔍 Found {len(proposals)} behavioral pattern(s). Check the **Self-Mod** panel.")
-                else:
-                    self._emit("No significant behavioral patterns detected yet. Keep using ARIA and check back.")
-            else:
-                self._emit("Self-Modification system not initialized.")
+                else: self._emit("No significant behavioral patterns detected yet. Keep using ARIA and check back.")
+            else: self._emit("Self-Modification system not initialized.")
             return
 
         if cmd == "/mods":
@@ -134,17 +134,27 @@ class ChatEngine:
                 self._emit("**Active Modifications:**\n" + "\n".join(lines))
             return
 
+        # /fabric
+        if cmd.startswith("/fabric"):
+            self._handle_fabric_slash(text, session_id)
+            return
+
         if cmd == "/help":
             self._emit(
-                "**ARIA Commands:**\n"
-                "`/history` — Show recent command history\n"
-                "`/rerun N` — Re-run command #N from history\n"
-                "`/sessions` — List previous sessions\n"
-                "`/session N` — Switch to session #N\n"
-                "`/snapshot` — System health snapshot\n"
-                "`/selfmod` — Run behavioral analysis now\n"
-                "`/mods` — Show active self-modifications\n"
-                "`/help` — This message"
+                "**ARIA Commands:**\n\n"
+                "`/history` — Show recent command history\n\n"
+                "`/rerun N` — Re-run command #N from history\n\n"
+                "`/sessions` — List previous sessions\n\n"
+                "`/session N` — Switch to session #N\n\n"
+                "`/snapshot` — System health snapshot\n\n"
+                "`/selfmod` — Run behavioral analysis now\n\n"
+                "`/mods` — Show active self-modifications\n\n"
+                "`/fabric <pattern> <text>` — Run a Fabric AI pattern\n\n"
+                "`/fabric list` — List all available Fabric patterns\n\n"
+                "`/fabric list <group>` — List patterns in a group (analysis/extraction/summarization/writing/security/coding)\n\n"
+                "`/fabric status` — Check if Fabric is installed\n\n"
+                "`/fabric path <path>` — Set Fabric binary path manually\n\n"
+                "`/help` — This message\n"
             )
             return
         self._emit(f"Unknown command: `{text}`. Try `/help`.")
@@ -161,20 +171,15 @@ class ChatEngine:
                 self._signals.chat_stream_chunk.emit(chunk)
                 full_response += chunk
             self._signals.chat_stream_done.emit()
-
             # Apply output mode
             output_mode = self._selfmod.get("output_mode", "verbose") if self._selfmod else "verbose"
             if output_mode == "summary" and len(full_response) > 400:
                 summarized = self._llm.summarize(full_response)
                 self._signals.chat_response.emit("assistant", summarized)
-            else:
-                self._signals.chat_response.emit("assistant", full_response)
-            if self._voice:
-                self._voice.speak(full_response)
-        except Exception as e:
-            self._emit(f"❌ LLM error: {e}")
-        finally:
-            self._signals.typing_indicator.emit(False)
+            else: self._signals.chat_response.emit("assistant", full_response)
+            if self._voice: self._voice.speak(full_response)
+        except Exception as e: self._emit(f"❌ LLM error: {e}")
+        finally: self._signals.typing_indicator.emit(False)
 
     def _handle_command(self, text: str, session_id: str, history: list):
         app_name = self._executor.extract_app_name(text)
@@ -189,10 +194,8 @@ class ChatEngine:
         if needs_confirmation(text):
             self._confirm_pending = {"cmd": text, "session_id": session_id}
             verbosity = self._selfmod.get("confirmation_verbosity", "full") if self._selfmod else "full"
-            if verbosity == "full":
-                msg = f"⚠️ This command requires confirmation:\n```\n{text}\n```\nType **yes** to execute or **no** to cancel."
-            else:
-                msg = f"⚠️ Confirm: `{text[:60]}` — **yes** / **no**"
+            if verbosity == "full": msg = f"⚠️ This command requires confirmation:\n```\n{text}\n```\nType **yes** to execute or **no** to cancel."
+            else: msg = f"⚠️ Confirm: `{text[:60]}` — **yes** / **no**"
             self._signals.confirm_request.emit(text, msg)
             self._emit(msg, force_speak=True)
             return
@@ -204,8 +207,7 @@ class ChatEngine:
         if text.lower().strip() in ("yes", "y", "confirm", "ok"):
             self._emit("✅ Executing...")
             self._run_command(pending["cmd"], pending["session_id"])
-        else:
-            self._emit("❌ Cancelled.")
+        else: self._emit("❌ Cancelled.")
 
     def _run_command(self, cmd: str, session_id: str, use_ps: bool = False):
         def _run():
@@ -252,8 +254,7 @@ class ChatEngine:
         success, msg = play_music(query)
         self._emit(msg)
 
-    def _handle_search(self, text: str, session_id: str, history: list):
-        self._handle_smart_search(text, session_id, history)
+    def _handle_search(self, text: str, session_id: str, history: list): self._handle_smart_search(text, session_id, history)
 
     def _handle_smart_search(self, text: str, session_id: str, history: list):
         url = self._llm.generate_url(text)
@@ -261,11 +262,9 @@ class ChatEngine:
             success, msg = self._executor.open_url(url)
             self._emit(msg)
             self._signals.timeline_event.emit("search", url)
-        else:
-            self._emit("Couldn't determine a search URL. Try being more specific.")
+        else: self._emit("Couldn't determine a search URL. Try being more specific.")
 
-    def _handle_show_apps(self, text: str, session_id: str, history: list):
-        self._handle_powershell("list installed apps", session_id, history)
+    def _handle_show_apps(self, text: str, session_id: str, history: list): self._handle_powershell("list installed apps", session_id, history)
 
     def _handle_time(self, text: str, session_id: str, history: list):
         now = datetime.datetime.now()
@@ -303,6 +302,147 @@ class ChatEngine:
         prompt = prompt or text
         self._emit(f"🎨 Generating image: *{prompt}*")
         generate_image_async(prompt, self._signals)
+        
+    def _handle_fabric_slash(self, text: str, session_id: str):
+        # Strip the /fabric prefix and parse remainder
+        remainder = re.sub(r"^/fabric\s*", "", text, flags=re.I).strip()
+
+        if not remainder or remainder.lower() == "help":
+            self._emit(
+                "**Fabric Usage:**\n\n"
+                "`/fabric status` — Check if Fabric is installed\n\n"
+                "`/fabric list` — List all patterns grouped by category\n\n"
+                "`/fabric list <group>` — List patterns in a specific group\n\n"
+                "`/fabric path <path>` — Set Fabric binary path manually\n\n"
+                "`/fabric <pattern> <text>` — Run a pattern on text\n\n"
+                "**Quick patterns:**\n" +
+                "\n".join(f"`/fabric {k}` — {v}" for k, v in FABRIC_QUICK_PATTERNS.items())
+            )
+            return
+
+        # status
+        if remainder.lower() == "status":
+            st = self._fabric.status()
+            if st["available"]: self._emit(
+                    f"✅ **Fabric is installed**\n\n"
+                    f"• Path: `{st['path']}`\n"
+                    f"• Available patterns: **{st['pattern_count']}**\n\n"
+                    f"Use `/fabric list` to see all patterns."
+                )
+            else: self._emit(
+                    "❌ **Fabric not found**\n\n"
+                    "Install it from [github.com/danielmiessler/fabric](https://github.com/danielmiessler/fabric)\n\n"
+                    "Once installed, use `/fabric path <path-to-binary>` if it's not in your PATH."
+                )
+            return
+
+        # list
+        if remainder.lower().startswith("list"):
+            parts = remainder.split(maxsplit=1)
+            group = parts[1].lower().strip() if len(parts) > 1 else None
+            if group and group in FABRIC_PATTERNS:
+                patterns = FABRIC_PATTERNS[group]
+                self._emit(
+                    f"**Fabric patterns — {group}:**\n\n" +
+                    "\n".join(f"• `{p}`" for p in patterns)
+                )
+            else:
+                lines = []
+                for grp, pats in FABRIC_PATTERNS.items():
+                    lines.append(f"**{grp.title()}**")
+                    lines.extend(f"  • `{p}`" for p in pats)
+                    lines.append("")
+                self._emit(
+                    f"**All Fabric pattern groups** — {sum(len(v) for v in FABRIC_PATTERNS.values())} total:\n\n" +
+                    "\n\n".join(lines)
+                )
+            return
+
+        # path
+        m = re.match(r"path\s+(.+)", remainder, re.I)
+        if m:
+            path = m.group(1).strip().strip("\"'")
+            import os
+            if os.path.isfile(path):
+                self._fabric.set_fabric_path(path)
+                self._emit(f"✅ Fabric path set to `{path}`")
+            else: self._emit(f"❌ File not found: `{path}`")
+            return
+
+        # <pattern> <text>  OR just <pattern> (use clipboard/last message?)
+        parts = remainder.split(maxsplit=1)
+        pattern = parts[0].lower().strip()
+        input_text = parts[1].strip() if len(parts) > 1 else ""
+
+        if not input_text:
+            self._emit(
+                f"⚠️ No input text provided for pattern `{pattern}`.\n\n"
+                f"Usage: `/fabric {pattern} <text to process>`\n\n"
+                f"Or send a message that says **fabric {pattern}** followed by your content."
+            )
+            return
+
+        self._run_fabric_pattern(pattern, input_text, session_id)
+
+    def _handle_fabric(self, text: str, session_id: str, history: list):
+        # Try to parse "fabric <pattern> <text>"
+        m = re.match(r"(?:fabric\s+)?(\w+)\s+(?:this\s*[:\-]?\s*|with fabric\s*[:\-]?\s*)?(.+)", text, re.I | re.S)
+        if m:
+            pattern_raw = m.group(1).lower()
+            input_text  = m.group(2).strip()
+
+            # Resolve via quick alias or direct name
+            pattern = FABRIC_QUICK_PATTERNS.get(pattern_raw, pattern_raw)
+            self._run_fabric_pattern(pattern, input_text, session_id)
+        else:
+            # Suggest a pattern based on content
+            suggested = self._fabric.suggest_pattern(text)
+            if suggested:
+                self._emit(
+                    f"💡 Looks like you want Fabric. Try:\n\n"
+                    f"`/fabric {suggested} <your text>`\n\n"
+                    f"Or `/fabric list` to see all patterns."
+                )
+            else:
+                self._emit(
+                    "🧵 **Fabric** is ready. Usage:\n\n"
+                    "`/fabric <pattern> <text>` — Run any Fabric pattern\n\n"
+                    "`/fabric list` — Browse all patterns"
+                )
+
+    def _run_fabric_pattern(self, pattern: str, text: str, session_id: str):
+        self._signals.typing_indicator.emit(True)
+        self._signals.status_update.emit(f"Running Fabric: {pattern}...")
+        self._signals.timeline_event.emit("fabric", f"{pattern} — {text[:60]}")
+
+        def _on_chunk(chunk: str): self._signals.chat_stream_chunk.emit(chunk)
+
+        def _on_done():
+            self._signals.chat_stream_done.emit()
+            self._signals.typing_indicator.emit(False)
+            self._signals.status_update.emit("Ready")
+
+        def _on_error(err: str):
+            self._signals.chat_stream_done.emit()
+            self._emit(f"❌ Fabric error: {err}")
+            self._signals.typing_indicator.emit(False)
+            self._signals.status_update.emit("Ready")
+
+        # Try streaming first; fall back to sync if stream not supported
+        if self._fabric.available:
+            self._fabric.run_stream(
+                pattern=pattern,
+                text=text,
+                chunk_callback=_on_chunk,
+                done_callback=_on_done,
+                error_callback=_on_error,
+            )
+        else:
+            # Fabric not installed — show install hint
+            _on_error(
+                "Fabric not found. Install from https://github.com/danielmiessler/fabric "
+                "or set the path with `/fabric path <binary-path>`"
+            )
     # Helpers
     def _emit(self, text: str, force_speak: bool = False):
         self._signals.chat_response.emit("assistant", text)
@@ -312,5 +452,4 @@ class ChatEngine:
         count = self._selfmod.get("suggestion_count", 3) if self._selfmod else 3
         return SUGGESTIONS.get(mode, SUGGESTIONS["chat"])[:count]
 
-    def set_confirm_pending(self, state: Optional[dict]):
-        self._confirm_pending = state
+    def set_confirm_pending(self, state: Optional[dict]): self._confirm_pending = state
