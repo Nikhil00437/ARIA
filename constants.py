@@ -269,3 +269,39 @@ SELFMOD_LOCKED_PARAMS = {
 # Health Monitor
 HEALTH_CHECK_INTERVAL_MS = 300_000
 HEALTH_RAM_THRESHOLD_MB  = 500
+
+# Fabric Integration
+# Quick pattern aliases — short keywords → full Fabric pattern names
+FABRIC_QUICK_PATTERNS: dict = {
+    "summarize":     "summarize",
+    "summary":       "summarize",
+    "wisdom":        "extract_wisdom",
+    "ideas":         "extract_ideas",
+    "insights":      "extract_insights",
+    "outline":       "create_outline",
+    "improve":       "improve_writing",
+    "claims":        "analyze_claims",
+    "quiz":          "create_quiz",
+    "tags":          "create_tags",
+    "rate":          "rate_content",
+    "explain":       "explain_code",
+    "meeting":       "summarize_meeting",
+    "paper":         "analyze_paper",
+    "threat":        "create_threat_scenarios",
+    "tldr":          "create_5_sentence_summary",
+    "micro":         "create_micro_summary",
+    "essay":         "write_essay",
+    "rewrite":       "rewrite_take",
+    "analyze":       "analyze_prose",
+    "chapters":      "create_video_chapters",
+    "mermaid":       "create_mermaid_visualization",
+    "markmap":       "create_markmap_visualization",
+}
+
+# Fabric binary search paths (tried in order)
+FABRIC_SEARCH_PATHS: list = [
+    "fabric",                                    # PATH lookup
+    "~/.local/bin/fabric",
+    "~/go/bin/fabric",
+    "~/.fabric/fabric",
+]
