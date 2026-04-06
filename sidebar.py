@@ -1,151 +1,144 @@
+# sidebar.py — Polished icon rail with refined stats
+
 import psutil
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox, QFrame, QSizePolicy
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QFrame
 from PyQt5.QtCore import QTimer, pyqtSignal, Qt
-from constants import THEMES
+from PyQt5.QtGui import QFont, QPalette, QColor
+
 
 class Sidebar(QWidget):
-    # Signals
     nav_clicked    = pyqtSignal(str)
-    theme_changed  = pyqtSignal(str)
     voice_toggled  = pyqtSignal(bool)
     silent_toggled = pyqtSignal(bool)
     mic_pressed    = pyqtSignal()
-    fabric_quick   = pyqtSignal(str)  # emits "/fabric list" or a quick command
 
     PAGES = [
-        ("💬", "Chat",     "chat"),
-        ("⌨️",  "Terminal", "terminal"),
-        ("📋", "Timeline", "timeline"),
-        ("⚠️",  "Warnings", "warnings"),
-        ("🧬", "Self-Mod", "selfmod"),
+        ("chat",     "Chat"),
+        ("terminal", "Terminal"),
+        ("patterns", "Patterns"),
+        ("warnings", "Warnings"),
+        ("selfmod",  "Self-Mod"),
     ]
+
+    PAGE_ICONS = {
+        "chat":     "💬",
+        "terminal": "⌨️",
+        "patterns": "⬡",
+        "warnings": "⚠️",
+        "selfmod":  "🧬",
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("Sidebar")
-        self.setFixedWidth(210)
+        self.setFixedWidth(68)
 
-        self._nav_buttons: dict = {}
-        self._active_page = "chat"
+        self._nav_buttons: dict[str, QPushButton] = {}
+        self._active_page  = "chat"
         self._warning_count = 0
+        self._voice_on     = True
+        self._silent_on    = False
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Logo
-        logo_area = QWidget()
-        logo_area.setObjectName("SidebarLogoArea")
-        logo_layout = QVBoxLayout(logo_area)
-        logo_layout.setContentsMargins(0, 0, 0, 0)
-        logo_layout.setSpacing(0)
+        # Logo 
+        logo = QLabel("◈")
+        logo.setObjectName("RailLogo")
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setFixedHeight(60)
+        layout.addWidget(logo)
 
-        logo = QLabel("◈  ARIA")
-        logo.setObjectName("SidebarLogo")
-        tagline = QLabel("RUNTIME INTELLIGENCE")
-        tagline.setObjectName("SidebarTagline")
+        # Nav buttons 
+        nav_frame = QWidget()
+        nav_layout = QVBoxLayout(nav_frame)
+        nav_layout.setContentsMargins(12, 8, 12, 8)
+        nav_layout.setSpacing(6)
 
-        logo_layout.addWidget(logo)
-        logo_layout.addWidget(tagline)
-        layout.addWidget(logo_area)
-        # Nav buttons
-        nav_section = QWidget()
-        nav_section.setObjectName("NavSection")
-        nav_layout = QVBoxLayout(nav_section)
-        nav_layout.setContentsMargins(0, 8, 0, 8)
-        nav_layout.setSpacing(0)
-
-        for icon, label, page in self.PAGES:
-            btn = QPushButton(f"  {icon}  {label}")
-            btn.setObjectName("NavBtn")
+        for page, label in self.PAGES:
+            btn = QPushButton(self.PAGE_ICONS[page])
+            btn.setObjectName("RailBtn")
+            btn.setFixedSize(44, 44)
+            btn.setToolTip(label)
             btn.clicked.connect(lambda _, p=page: self._on_nav(p))
             nav_layout.addWidget(btn)
             self._nav_buttons[page] = btn
 
-        self._warn_btn = self._nav_buttons["warnings"]
-        self._set_active("chat")
-        layout.addWidget(nav_section)
+        layout.addWidget(nav_frame)
+        layout.addStretch()
 
-        layout.addWidget(self._hsep())
-        # System info
-        self._sys_section = QLabel("SYSTEM")
-        self._sys_section.setObjectName("SidebarSection")
-        layout.addWidget(self._sys_section)
+        # Separator 
+        layout.addWidget(self._sep())
 
-        self._cpu_label = QLabel("CPU  ·  –")
-        self._cpu_label.setObjectName("SysInfo")
-        self._ram_label = QLabel("RAM  ·  –")
-        self._ram_label.setObjectName("SysInfo")
+        # System stats 
+        stats_frame = QWidget()
+        stats_layout = QVBoxLayout(stats_frame)
+        stats_layout.setContentsMargins(12, 8, 12, 8)
+        stats_layout.setSpacing(8)
 
-        layout.addWidget(self._cpu_label)
-        layout.addWidget(self._ram_label)
+        self._cpu_bar  = self._make_mini_bar("CPU")
+        self._ram_bar  = self._make_mini_bar("RAM")
+        stats_layout.addWidget(self._cpu_bar[0])
+        stats_layout.addWidget(self._ram_bar[0])
 
-        layout.addWidget(self._hsep())
-        # Controls section
-        ctrl_section = QLabel("CONTROLS")
-        ctrl_section.setObjectName("SidebarSection")
-        layout.addWidget(ctrl_section)
+        layout.addWidget(stats_frame)
+        layout.addWidget(self._sep())
 
-        self._voice_btn = QPushButton("🔊  Voice  ·  On")
-        self._voice_btn.setObjectName("ToggleBtn")
+        # Bottom controls
+        bottom = QWidget()
+        bot_layout = QVBoxLayout(bottom)
+        bot_layout.setContentsMargins(12, 8, 12, 14)
+        bot_layout.setSpacing(6)
+
+        self._voice_btn = QPushButton("🔊")
+        self._voice_btn.setObjectName("RailBtn")
+        self._voice_btn.setFixedSize(44, 44)
+        self._voice_btn.setToolTip("Voice: ON")
         self._voice_btn.setCheckable(True)
         self._voice_btn.setChecked(True)
-        self._voice_btn.clicked.connect(self._on_voice_toggle)
-        layout.addWidget(self._voice_btn)
+        self._voice_btn.clicked.connect(self._on_voice)
+        bot_layout.addWidget(self._voice_btn)
 
-        self._silent_btn = QPushButton("🤫  Silent  ·  Off")
-        self._silent_btn.setObjectName("ToggleBtn")
+        self._mic_btn = QPushButton("🎤")
+        self._mic_btn.setObjectName("RailBtn")
+        self._mic_btn.setFixedSize(44, 44)
+        self._mic_btn.setToolTip("Hold to Speak")
+        self._mic_btn.pressed.connect(self._on_mic_press)
+        bot_layout.addWidget(self._mic_btn)
+
+        self._silent_btn = QPushButton("🔔")
+        self._silent_btn.setObjectName("RailBtn")
+        self._silent_btn.setFixedSize(44, 44)
+        self._silent_btn.setToolTip("Silent Mode: OFF")
         self._silent_btn.setCheckable(True)
         self._silent_btn.setChecked(False)
-        self._silent_btn.clicked.connect(self._on_silent_toggle)
-        layout.addWidget(self._silent_btn)
+        self._silent_btn.clicked.connect(self._on_silent)
+        bot_layout.addWidget(self._silent_btn)
 
-        self._mic_btn = QPushButton("🎤  Hold to Speak")
-        self._mic_btn.setObjectName("MicBtn")
-        self._mic_btn.pressed.connect(self._on_mic_press)
-        layout.addWidget(self._mic_btn)
+        layout.addWidget(bottom)
 
-        layout.addWidget(self._hsep())
-        # Fabric section
-        fabric_section = QLabel("FABRIC")
-        fabric_section.setObjectName("SidebarSection")
-        layout.addWidget(fabric_section)
+        root.addLayout(layout)
 
-        self._fabric_status = QLabel("◌  Checking...")
-        self._fabric_status.setObjectName("SysInfo")
-        layout.addWidget(self._fabric_status)
+        # Vertical accent bar on right edge
+        self._accent = QFrame()
+        self._accent.setFixedWidth(3)
+        self._accent.setStyleSheet("background: #00e5cc;")
+        root.addWidget(self._accent)
 
-        self._fabric_btn = QPushButton("🧵  Fabric Patterns")
-        self._fabric_btn.setObjectName("NavBtn")
-        self._fabric_btn.clicked.connect(self._on_fabric_click)
-        layout.addWidget(self._fabric_btn)
+        self._set_active("chat")
 
-        # Check fabric availability
-        self._check_fabric()
-
-        layout.addWidget(self._hsep())
-        theme_section = QLabel("APPEARANCE")
-        theme_section.setObjectName("SidebarSection")
-        layout.addWidget(theme_section)
-
-        self._theme_combo = QComboBox()
-        self._theme_combo.setObjectName("ThemeCombo")
-        self._theme_combo.addItems(list(THEMES.keys()))
-        self._theme_combo.currentTextChanged.connect(self.theme_changed)
-        layout.addWidget(self._theme_combo)
-
-        layout.addStretch()
-        # Version tag
-        ver = QLabel("v1.0  ·  local")
-        ver.setObjectName("SidebarTagline")
-        ver.setAlignment(Qt.AlignCenter)
-        layout.addWidget(ver)
-        # System refresh timer
+        # System info timer
         self._sys_timer = QTimer(self)
-        self._sys_timer.setInterval(30_000)
+        self._sys_timer.setInterval(10_000)
         self._sys_timer.timeout.connect(self._update_sysinfo)
         self._sys_timer.start()
         self._update_sysinfo()
+
     # Nav
     def _on_nav(self, page: str):
         self._set_active(page)
@@ -154,79 +147,98 @@ class Sidebar(QWidget):
     def _set_active(self, page: str):
         self._active_page = page
         for p, btn in self._nav_buttons.items():
-            name = "NavBtnActive" if p == page else "NavBtn"
-            btn.setObjectName(name)
+            obj = "RailBtnActive" if p == page else "RailBtn"
+            btn.setObjectName(obj)
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+
     # Warning badge
     def set_warning_count(self, count: int):
         self._warning_count = count
-        self._warn_btn.setText(
-            f"  ⚠️  Warnings  ·  {count}" if count > 0 else "  ⚠️  Warnings"
-        )
-    # Toggles
-    def _on_voice_toggle(self):
-        on = self._voice_btn.isChecked()
-        self._voice_btn.setText("🔊  Voice  ·  On" if on else "🔇  Voice  ·  Off")
-        self.voice_toggled.emit(on)
+        btn = self._nav_buttons.get("warnings")
+        if btn: btn.setToolTip(f"Warnings ({count})")
 
-    def _on_silent_toggle(self):
-        on = self._silent_btn.isChecked()
-        self._silent_btn.setText("🤫  Silent  ·  On" if on else "🤫  Silent  ·  Off")
-        self.silent_toggled.emit(on)
+    # Voice / mic
+    def _on_voice(self):
+        self._voice_on = self._voice_btn.isChecked()
+        self._voice_btn.setText("🔊" if self._voice_on else "🔇")
+        self._voice_btn.setToolTip(f"Voice: {'ON' if self._voice_on else 'OFF'}")
+        self.voice_toggled.emit(self._voice_on)
 
     def _on_mic_press(self):
-        self._mic_btn.setObjectName("MicBtnActive")
+        self._mic_btn.setObjectName("RailBtnActive")
         self._mic_btn.style().unpolish(self._mic_btn)
         self._mic_btn.style().polish(self._mic_btn)
-        self._mic_btn.setText("🔴  Recording...")
+        self._mic_btn.setText("🔴")
+        self._mic_btn.setToolTip("Recording…")
         self.mic_pressed.emit()
-        QTimer.singleShot(6200, self._reset_mic_btn)
+        QTimer.singleShot(6200, self._reset_mic)
 
-    def _reset_mic_btn(self):
-        self._mic_btn.setObjectName("MicBtn")
+    def _reset_mic(self):
+        self._mic_btn.setObjectName("RailBtn")
         self._mic_btn.style().unpolish(self._mic_btn)
         self._mic_btn.style().polish(self._mic_btn)
-        self._mic_btn.setText("🎤  Hold to Speak")
+        self._mic_btn.setText("🎤")
+        self._mic_btn.setToolTip("Hold to Speak")
+
+    def _on_silent(self):
+        self._silent_on = self._silent_btn.isChecked()
+        self._silent_btn.setText("🔕" if self._silent_on else "🔔")
+        self._silent_btn.setToolTip(f"Silent Mode: {'ON' if self._silent_on else 'OFF'}")
+        self.silent_toggled.emit(self._silent_on)
 
     def apply_selfmod(self, voice_on: bool, silent_on: bool):
         self._voice_btn.setChecked(voice_on)
-        self._voice_btn.setText("🔊  Voice  ·  On" if voice_on else "🔇  Voice  ·  Off")
+        self._voice_on = voice_on
+        self._voice_btn.setText("🔊" if voice_on else "🔇")
         self._silent_btn.setChecked(silent_on)
-        self._silent_btn.setText("🤫  Silent  ·  On" if silent_on else "🤫  Silent  ·  Off")
+        self._silent_on = silent_on
+        self._silent_btn.setText("🔕" if silent_on else "🔔")
+
+    def set_page_tint(self, color: str): self._accent.setStyleSheet(f"background: {color};")
+
     # System info
+    def _make_mini_bar(self, label: str):
+        container = QWidget()
+        container.setFixedHeight(24)
+        container.setToolTip(label)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
+
+        bar_wrap = QFrame()
+        bar_wrap.setFixedHeight(3)
+        bar_wrap.setObjectName("RailStatBar")
+
+        bar_fill = QFrame(bar_wrap)
+        bar_fill.setFixedHeight(3)
+        bar_fill.setObjectName("RailStatFill")
+        bar_fill.setFixedWidth(0)
+
+        layout.addWidget(bar_wrap)
+        return container, bar_fill, bar_wrap
+
     def _update_sysinfo(self):
         try:
             cpu = psutil.cpu_percent(interval=None)
             mem = psutil.virtual_memory()
-            self._cpu_label.setText(f"CPU  ·  {cpu:.0f}%")
-            used  = mem.used  // (1024 ** 3)
-            total = mem.total // (1024 ** 3)
-            self._ram_label.setText(f"RAM  ·  {mem.percent:.0f}%  ({used}/{total} GB)")
-        except Exception:
-            self._cpu_label.setText("CPU  ·  –")
-            self._ram_label.setText("RAM  ·  –")
-    # Fabric
-    def _check_fabric(self):
-        import threading
-        def _run():
-            from fabric_client import FabricClient
-            fc = FabricClient()
-            if fc.available:
-                count = len(fc.list_patterns())
-                self._fabric_status.setText(f"✅  {count} patterns")
-            else: self._fabric_status.setText("❌  Not found")
-        threading.Thread(target=_run, daemon=True).start()
 
-    def _on_fabric_click(self):
-        self.fabric_quick.emit("/fabric list")
+            _, cpu_fill, cpu_wrap = self._cpu_bar
+            _, ram_fill, ram_wrap = self._ram_bar
+
+            w_cpu = cpu_wrap.width()
+            w_ram = ram_wrap.width()
+            if w_cpu > 4: cpu_fill.setFixedWidth(max(2, int(w_cpu * cpu / 100)))
+            if w_ram > 4: ram_fill.setFixedWidth(max(2, int(w_ram * mem.percent / 100)))
+
+            self._cpu_bar[0].setToolTip(f"CPU: {cpu:.0f}%")
+            self._ram_bar[0].setToolTip(f"RAM: {mem.percent:.0f}%")
+        except Exception: pass
 
     # Helpers
-    def _hsep(self) -> QWidget:
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setObjectName("HSep")
-        sep.setStyleSheet("background: transparent; border: none; border-top: 1px solid;")
-        sep.setContentsMargins(16, 4, 16, 4)
-        sep.setFixedHeight(9)
-        return sep
+    def _sep(self) -> QFrame:
+        f = QFrame()
+        f.setFrameShape(QFrame.HLine)
+        f.setFixedHeight(1)
+        f.setStyleSheet("background: rgba(255,255,255,0.06); margin: 0 14px;")
+        return f

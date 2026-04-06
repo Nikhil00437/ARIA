@@ -1,5 +1,6 @@
 import subprocess, shutil, os, json, threading
 from typing import Optional, Generator, Callable
+from constants import FABRIC_SEARCH_PATHS
 
 # Well-known Fabric patterns grouped by use case
 FABRIC_PATTERNS: dict[str, list[str]] = {
@@ -92,17 +93,10 @@ class FabricClient:
         # Standard PATH lookup
         found = shutil.which("fabric")
         if found: return found
-        # Common install locations
-        candidates = [
-            os.path.expanduser("~/.local/bin/fabric"),
-            os.path.expanduser("~/go/bin/fabric"),
-            os.path.expanduser("~/.fabric/fabric"),
-            r"C:\Users\%s\go\bin\fabric.exe" % os.environ.get("USERNAME", ""),
-            r"C:\Program Files\fabric\fabric.exe",
-        ]
+        # Common install locations from centralized constants
+        candidates = [os.path.expandvars(os.path.expanduser(c)) for c in FABRIC_SEARCH_PATHS]
         for c in candidates:
-            expanded = os.path.expandvars(c)
-            if os.path.isfile(expanded): return expanded
+            if os.path.isfile(c): return c
         return None
 
     @property
@@ -111,7 +105,9 @@ class FabricClient:
     def get_fabric_path(self) -> Optional[str]: return self._fabric_path
 
     def set_fabric_path(self, path: str):
-        if os.path.isfile(path): self._fabric_path = path
+        if os.path.isfile(path):
+            self._fabric_path = path
+            self._available_patterns = None  # invalidate cache so it re-discovers patterns
 
     def list_patterns(self) -> list[str]:
         if self._available_patterns is not None: return self._available_patterns
@@ -173,9 +169,11 @@ class FabricClient:
         done_callback: Callable[[], None],
         error_callback: Callable[[str], None],
         extra_args: list[str] = None,
+        timeout: int = 120,
     ):
         # Run a Fabric pattern and stream output chunks to chunk_callback.
-        # Runs in a background thread.  
+        # Runs in a background thread.
+        import time, sys
         def _run():
             if not self.available:
                 error_callback(
@@ -191,6 +189,7 @@ class FabricClient:
             args = [self._fabric_path, "--pattern", pattern, "--stream"]
             if extra_args: args.extend(extra_args)
 
+            start_time = time.time()
             try:
                 proc = subprocess.Popen(
                     args,
@@ -198,20 +197,54 @@ class FabricClient:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    bufsize=1,
                 )
                 # Write input and close stdin
                 proc.stdin.write(text)
                 proc.stdin.close()
-                # Stream stdout
-                for line in iter(proc.stdout.readline, ""):
-                    if line: chunk_callback(line)
 
+                stderr_output = []
+
+                # Read stderr in a separate thread to avoid pipe deadlock
+                def _read_stderr():
+                    for line in proc.stderr:
+                        stderr_output.append(line)
+                stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
+                stderr_thread.start()
+
+                # Stream stdout with timeout
+                while True:
+                    elapsed = time.time() - start_time
+                    if elapsed > timeout:
+                        proc.kill()
+                        error_callback(f"Fabric timed out ({timeout}s). Try a shorter input.")
+                        return
+
+                    # Non-blocking readline with a short timeout via polling
+                    line = proc.stdout.readline()
+                    if line:
+                        chunk_callback(line)
+                    elif proc.poll() is not None:
+                        # Process ended, drain remaining stdout
+                        for remaining in proc.stdout:
+                            chunk_callback(remaining)
+                        break
+                    else:
+                        time.sleep(0.05)  # small sleep to avoid busy-wait
+
+                stderr_thread.join(timeout=5)
                 proc.wait()
+
                 if proc.returncode != 0:
-                    err = proc.stderr.read().strip()
+                    err = "".join(stderr_output).strip() or "Unknown error"
                     error_callback(f"Fabric error: {err}")
-                else: done_callback()
-            except Exception as e: error_callback(f"Fabric execution failed: {e}")
+                else:
+                    done_callback()
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                error_callback(f"Fabric timed out ({timeout}s). Try a shorter input.")
+            except Exception as e:
+                error_callback(f"Fabric execution failed: {e}")
 
         threading.Thread(target=_run, daemon=True).start()
 

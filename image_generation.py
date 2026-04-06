@@ -13,7 +13,7 @@ def generate_image_async(prompt: str, signals, output_dir: str = None):
             dtype  = torch.float16 if device == "cuda" else torch.float32
 
             pipe = StableDiffusionPipeline.from_pretrained(
-                "stabilityai/stable-diffusion-2-1",
+                "Manojb/stable-diffusion-2-1-base",
                 torch_dtype=dtype,
             )
             pipe = pipe.to(device)

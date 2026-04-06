@@ -22,6 +22,8 @@ class ARIASignals(QObject):
     stt_result         = pyqtSignal(str)
     stt_error          = pyqtSignal(str)
     tts_speaking       = pyqtSignal(bool)
+    # Patterns
+    pattern_suggested  = pyqtSignal(str, str)   # (pattern_name, original_input)
     # Self-Mod
     selfmod_proposal   = pyqtSignal(list)        # list of proposal dicts
     selfmod_applied    = pyqtSignal(str, object) # (param_key, new_value)

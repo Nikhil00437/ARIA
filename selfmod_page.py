@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton, QTabWidget
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton, QTabWidget, QFileDialog, QFrame
 from PyQt5.QtCore import Qt, pyqtSignal
 from widgets import ConfidenceBadge, Separator
 
@@ -180,12 +180,25 @@ class SelfModPage(QWidget):
     rejected = pyqtSignal(str)
     rollback = pyqtSignal(str)
     analyze  = pyqtSignal()
+    file_uploaded = pyqtSignal(str)  # file content
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("SelfModPage")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        accent = QFrame()
+        accent.setFixedHeight(3)
+        accent.setStyleSheet("background: #a855f7;")
+        layout.addWidget(accent)
+
+        inner = QWidget()
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(20, 20, 20, 16)
+        inner_layout.setSpacing(12)
+        layout.addWidget(inner, 1)
 
         # Header
         header_row = QHBoxLayout()
@@ -195,12 +208,17 @@ class SelfModPage(QWidget):
         header_row.addWidget(header)
         header_row.addStretch()
 
+        upload_btn = QPushButton("◇  Upload Conversation")
+        upload_btn.setObjectName("AnalyzeBtn")
+        upload_btn.clicked.connect(self._on_upload_file)
+        header_row.addWidget(upload_btn)
+
         analyze_btn = QPushButton("◈  Analyze Now")
         analyze_btn.setObjectName("AnalyzeBtn")
         analyze_btn.clicked.connect(self.analyze.emit)
         header_row.addWidget(analyze_btn)
 
-        layout.addLayout(header_row)
+        inner_layout.addLayout(header_row)
         # Description
         desc = QLabel(
             "ARIA monitors your interaction patterns and proposes targeted "
@@ -209,10 +227,10 @@ class SelfModPage(QWidget):
         )
         desc.setObjectName("ProposalMeta")
         desc.setWordWrap(True)
-        layout.addWidget(desc)
+        inner_layout.addWidget(desc)
 
         sep = Separator()
-        layout.addWidget(sep)
+        inner_layout.addWidget(sep)
         # Tabs
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)
@@ -229,7 +247,7 @@ class SelfModPage(QWidget):
         self._tabs.addTab(self._active_tab[0],    "Active  (0)")
         self._tabs.addTab(self._ledger_tab[0],    "Ledger")
 
-        layout.addWidget(self._tabs, 1)
+        inner_layout.addWidget(self._tabs, 1)
         self._pending_count = 0
     # Tab factory
     def _make_scroll_tab(self):
@@ -325,8 +343,7 @@ class SelfModPage(QWidget):
         self.remove_proposal_card(proposal_id)
         self.rejected.emit(proposal_id)
 
-    def _on_rollback(self, entry_id: str):
-        self.rollback.emit(entry_id)
+    def _on_rollback(self, entry_id: str): self.rollback.emit(entry_id)
     # Helpers
     def _clear_layout(self, layout):
         while layout.count() > 1:
@@ -343,3 +360,16 @@ class SelfModPage(QWidget):
         label.setWordWrap(True)
         label.setContentsMargins(24, 48, 24, 48)
         return label
+
+    def _on_upload_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Upload Conversation File",
+            "",
+            "Text Files (*.txt *.md);;All Files (*)"
+        )
+        if not file_path: return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f: content = f.read()
+            if content.strip(): self.file_uploaded.emit(content)
+        except Exception as e: print(f"[SelfModPage] Failed to read file: {e}")

@@ -5,6 +5,7 @@ CLASSIFIER_MODEL     = "intent"
 LLM_TIMEOUT          = 30
 LLM_CHAT_TEMPERATURE = 0.7
 LLM_CLASS_TEMPERATURE= 0.1
+
 # MongoDB
 MONGO_URI    = "mongodb://localhost:27017"
 MONGO_DB     = "aria_db"
@@ -13,7 +14,7 @@ COL_COMMANDS = "command_logs"
 COL_SELFMOD  = "selfmod_ledger"
 COL_PROFILE  = "behavioral_profile"
 
-# Themes 
+# Themes
 THEMES = {
     "cyber": {
         "bg":        "#07090f",
@@ -34,6 +35,24 @@ THEMES = {
         "success":   "#00e5cc",
         "user_msg":  "#0b1d34",
         "ai_msg":    "#090e1c",
+        "chat_page":     "#080d1a",
+        "terminal_page": "#060c14",
+        "timeline_page": "#0c0a1e",
+        "warnings_page": "#140a12",
+        "selfmod_page":  "#100818",
+        "patterns_page": "#081018",
+        "sidebar_chat":     "#070d1a",
+        "sidebar_terminal": "#060c14",
+        "sidebar_timeline": "#0a0a1e",
+        "sidebar_warnings": "#140a10",
+        "sidebar_selfmod":  "#0e0818",
+        "sidebar_patterns": "#061018",
+        "glass_chat":     "#0e1628",
+        "glass_terminal": "#0c1420",
+        "glass_timeline": "#12142a",
+        "glass_warnings": "#1a0e18",
+        "glass_selfmod":  "#160c20",
+        "glass_patterns": "#0c1822",
     },
     "minimal": {
         "bg":        "#f9fbfd",
@@ -54,6 +73,24 @@ THEMES = {
         "success":   "#059669",
         "user_msg":  "#dbeafe",
         "ai_msg":    "#f8fafc",
+        "chat_page":     "#f7fafd",
+        "terminal_page": "#f5f8fc",
+        "timeline_page": "#f8f7fb",
+        "warnings_page": "#fbf7f8",
+        "selfmod_page":  "#f9f5fb",
+        "patterns_page": "#f6f9fb",
+        "sidebar_chat":     "#eaf0f8",
+        "sidebar_terminal": "#e7eef6",
+        "sidebar_timeline": "#ece8f4",
+        "sidebar_warnings": "#f2e8ec",
+        "sidebar_selfmod":  "#f0e6f6",
+        "sidebar_patterns": "#e8f0f6",
+        "glass_chat":     "#eef4fa",
+        "glass_terminal": "#ebf0f6",
+        "glass_timeline": "#f0ecf6",
+        "glass_warnings": "#f6eef0",
+        "glass_selfmod":  "#f2eaf8",
+        "glass_patterns": "#eaf2f8",
     },
     "classic": {
         "bg":        "#101010",
@@ -74,8 +111,27 @@ THEMES = {
         "success":   "#40c840",
         "user_msg":  "#1c1c1c",
         "ai_msg":    "#121212",
+        "chat_page":     "#111311",
+        "terminal_page": "#0e100e",
+        "timeline_page": "#121012",
+        "warnings_page": "#131010",
+        "selfmod_page":  "#101014",
+        "patterns_page": "#0e1210",
+        "sidebar_chat":     "#0e0e0e",
+        "sidebar_terminal": "#0c0e0c",
+        "sidebar_timeline": "#100e10",
+        "sidebar_warnings": "#110e0e",
+        "sidebar_selfmod":  "#0e0e12",
+        "sidebar_patterns": "#0c100e",
+        "glass_chat":     "#161616",
+        "glass_terminal": "#141614",
+        "glass_timeline": "#181418",
+        "glass_warnings": "#191414",
+        "glass_selfmod":  "#14141a",
+        "glass_patterns": "#121614",
     },
 }
+
 DEFAULT_THEME = "cyber"
 
 # System Prompt
@@ -108,6 +164,7 @@ Modes:
 - history       : show command history
 - rerun         : re-execute a previous command
 - image_gen     : generate an image
+- fabric        : run a Fabric AI pattern (summarize, extract_wisdom, analyze_claims, etc)
 
 User message: {message}"""
 
@@ -197,6 +254,7 @@ SEARCH_TEMPLATES = {
     "dockerhub":     "https://hub.docker.com/search?q={q}",
     "kaggle":        "https://www.kaggle.com/search?q={q}",
 }
+
 SITE_ALIASES = {
     "yt": "youtube", "gh": "github", "so": "stackoverflow",
     "hf": "huggingface", "wiki": "wikipedia", "gmap": "maps",
@@ -247,14 +305,102 @@ CONFIRM_PATTERNS = [
     r"remove-item",
 ]
 
-# Suggestion Map
-SUGGESTIONS = {
-    "chat":       ["Tell me something interesting", "Explain quantum computing", "What can you do?"],
-    "command":    ["Open Task Manager", "List running processes", "Check disk space"],
-    "powershell": ["Show RAM usage", "List running services", "Show open ports"],
-    "search":     ["Search GitHub for FastAPI", "Find Python tutorials on YouTube", "Search arXiv for LLM papers"],
-    "image_gen":  ["Generate a cyberpunk city", "Create a minimalist logo", "Draw a futuristic robot"],
+# Suggestion Map — large pools, randomly sampled each session
+SUGGESTION_POOLS = {
+    "chat": [
+        "Tell me something interesting",
+        "Explain quantum computing like I'm five",
+        "What's a mind-blowing fact?",
+        "What can you do?",
+        "Tell me a short story",
+        "What's the coolest tech trend right now?",
+        "Explain black holes to me",
+        "Give me a random fun fact",
+        "What would happen if the internet stopped?",
+        "Tell me about the future of AI",
+        "What's a skill I can learn in a week?",
+        "Explain how dreams work",
+        "What's the most underrated invention?",
+        "Tell me something weird about space",
+        "What's a paradox that breaks your brain?",
+        "Explain blockchain simply",
+        "What would aliens think of Earth?",
+        "Tell me about a historical mystery",
+        "What's the meaning of life according to science?",
+        "Explain how consciousness works",
+    ],
+    "command": [
+        "Open Task Manager",
+        "List running processes",
+        "Check disk space",
+        "Show my IP address",
+        "List all installed programs",
+        "Check system uptime",
+        "Show network adapters",
+        "List USB devices connected",
+        "Check Windows version",
+        "Show battery health",
+        "List startup programs",
+        "Check for pending updates",
+        "Show clipboard history",
+        "List environment variables",
+        "Check screen resolution",
+    ],
+    "powershell": [
+        "Show RAM usage",
+        "List running services",
+        "Show open ports",
+        "Get CPU temperature",
+        "Show disk health status",
+        "List recent event log errors",
+        "Show network latency",
+        "Get GPU information",
+        "List scheduled tasks",
+        "Show PowerShell version and modules",
+        "Check DNS configuration",
+        "Show active network connections",
+        "List all user accounts",
+        "Show Windows feature status",
+        "Get system temperature sensors",
+    ],
+    "search": [
+        "Search GitHub for FastAPI",
+        "Find Python tutorials on YouTube",
+        "Search arXiv for LLM papers",
+        "Find the best VS Code extensions",
+        "Search for latest AI breakthroughs",
+        "Find open-source alternatives to popular apps",
+        "Search for cybersecurity news today",
+        "Find trending repositories on GitHub",
+        "Search for machine learning datasets",
+        "Find the best programming podcasts",
+        "Search for web development trends 2026",
+        "Find free cloud hosting options",
+        "Search for Rust programming resources",
+        "Find coding challenge platforms",
+        "Search for latest cybersecurity threats",
+    ],
+    "image_gen": [
+        "Generate a cyberpunk city",
+        "Create a minimalist logo",
+        "Draw a futuristic robot",
+        "Generate a neon-lit alleyway",
+        "Create an abstract data visualization",
+        "Draw a steampunk airship",
+        "Generate a synthwave sunset",
+        "Create a pixel art character",
+        "Draw a crystal cave with bioluminescence",
+        "Generate a retro-futuristic spaceship",
+        "Create an isometric room design",
+        "Draw a magical library",
+        "Generate a glitch art portrait",
+        "Create a vaporwave aesthetic scene",
+        "Draw a floating island in the clouds",
+    ],
 }
+
+# Legacy SUGGESTIONS dict (kept for backwards compatibility, uses first items from pools)
+SUGGESTIONS = {mode: pool[:5] for mode, pool in SUGGESTION_POOLS.items()}
 
 # Self-Modification Boundary — LOCKED params
 SELFMOD_LOCKED_PARAMS = {
@@ -298,10 +444,11 @@ FABRIC_QUICK_PATTERNS: dict = {
     "markmap":       "create_markmap_visualization",
 }
 
-# Fabric binary search paths (tried in order)
-FABRIC_SEARCH_PATHS: list = [
-    "fabric",                                    # PATH lookup
+# Fabric binary search paths (tried in order after PATH lookup)
+FABRIC_SEARCH_PATHS: list[str] = [
     "~/.local/bin/fabric",
     "~/go/bin/fabric",
     "~/.fabric/fabric",
+    r"C:\Users\%USERNAME%\go\bin\fabric.exe",
+    r"C:\Program Files\fabric\fabric.exe",
 ]

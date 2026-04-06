@@ -53,6 +53,13 @@ class SelfModController:
         proposals = self.engine.generate_proposals(patterns)
         for p in proposals: self._pending[p.id] = (p, session_id)
         return [p.to_dict() for p in proposals]
+
+    def analyze_from_file(self, file_content: str, session_id: str = "file_upload") -> list:
+        patterns = self.inferencer.analyze_from_text(file_content)
+        if not patterns: return []
+        proposals = self.engine.generate_proposals(patterns)
+        for p in proposals: self._pending[p.id] = (p, session_id)
+        return [p.to_dict() for p in proposals]
     # User Decision
     def approve(self, proposal_id: str) -> tuple:
         if proposal_id not in self._pending: raise KeyError(f"Proposal '{proposal_id}' not found or already decided.")

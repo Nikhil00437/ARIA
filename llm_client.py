@@ -20,13 +20,26 @@ class LLMClient:
             return r.status_code == 200
         except Exception: return False
     # Internal helpers
-    def _post(self, payload: dict, stream: bool = False) -> requests.Response:
-        return requests.post(
+    def _post(self, payload: dict, stream: bool = False) -> requests.Response: return requests.post(
             f"{self._base}/chat/completions",
             json=payload,
             timeout=LLM_TIMEOUT,
             stream=stream,
         )
+
+    @staticmethod
+    def _sanitize_messages(messages: list) -> list:
+        sanitized = []
+        found_user = False
+        for msg in messages:
+            if msg.get("role") == "user":
+                found_user = True
+            if msg.get("role") == "assistant" and not found_user:
+                continue
+            sanitized.append(msg)
+        if not found_user and sanitized:
+            sanitized.insert(0, {"role": "user", "content": "Hello"})
+        return sanitized
 
     def _simple(self, model: str, system: str, user: str, temperature: float = 0.7) -> str:
         payload = {
@@ -39,7 +52,10 @@ class LLMClient:
         }
         r = self._post(payload)
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"].strip()
+        data = r.json()
+        if "choices" not in data or not data["choices"]:
+            raise ValueError(f"LLM returned no choices: {data}")
+        return data["choices"][0]["message"]["content"].strip()
 
     # Intent Classification
     # Fast offline regex paths — zero LLM cost
@@ -52,11 +68,18 @@ class LLMClient:
         (r"\b(show|list) (apps|installed)\b",                   "show_apps",   0.95),
         (r"\b(ram|memory|cpu|disk|port|service|startup)\s*(usage|info|space|list)?\b", "powershell", 0.88),
         (r"\b(search|find|look up)\s+.+\s+on\s+(youtube|github|arxiv|stackoverflow|huggingface|pypi|npm|reddit)\b", "smart_search", 0.95),
-        (r"\bwho (is|was)\b|\bwhat is (the|a|an) \w+\b", "wikipedia", 0.75),
+        (r"\bwho (is|was)\b|\bwhat is (the|a|an) \w+\b",       "wikipedia",   0.75),
         (r"\bgenerate.*(image|picture|photo|art)\b",            "image_gen",   0.93),
         (r"\bexplain.*(code|function|class|error|snippet)\b",   "explain",     0.91),
-        (r"^/history\b",                                        "history",     0.99),
-        (r"^/rerun\s+\d+",                                      "rerun",       0.99),
+        # Fabric patterns
+        (r"^/fabric\b",                                         "fabric",      0.99),
+        (r"\bfabric\s+\w+",                                     "fabric",      0.90),
+        (r"\b(extract wisdom|extract ideas|extract insights)\b","fabric",      0.92),
+        (r"\b(summarize|summarise) (this|it|the following)\b",  "fabric",      0.85),
+        (r"\b(improve (my |this |the )?writing|rewrite (this|it))\b", "fabric", 0.83),
+        (r"\banalyze (claims|debate|paper|prose)\b",            "fabric",      0.88),
+        (r"\bcreate (quiz|outline|tags|threat scenarios)\b",    "fabric",      0.86),
+        (r"\b(rate|score) (this|the|my) (content|writing|text)\b", "fabric",  0.84),
     ]
     
     def classify_intent(self, message: str) -> dict:
@@ -81,11 +104,12 @@ class LLMClient:
         except Exception as e: return {"mode": "chat", "confidence": 0.5, "source": "fallback", "error": str(e)}
     # Chat (streaming)
     def chat_stream(self, messages: list) -> Generator[str, None, None]:
+        sanitized = self._sanitize_messages(messages)
         payload = {
             "model":       self._chat_model,
             "temperature": LLM_CHAT_TEMPERATURE,
             "stream":      True,
-            "messages":    [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+            "messages":    [{"role": "system", "content": SYSTEM_PROMPT}] + sanitized,
         }
         try:
             r = self._post(payload, stream=True)
@@ -98,21 +122,27 @@ class LLMClient:
                     if data == "[DONE]": break
                     try:
                         chunk = json.loads(data)
-                        delta = chunk["choices"][0]["delta"].get("content", "")
+                        choices = chunk.get("choices")
+                        if not choices: continue
+                        delta = choices[0]["delta"].get("content", "")
                         if delta: yield delta
-                    except json.JSONDecodeError: continue
+                    except (json.JSONDecodeError, KeyError, IndexError): continue
         except Exception as e: yield f"\n\n[LLM Error: {e}]"
 
     def chat(self, messages: list) -> str:
+        sanitized = self._sanitize_messages(messages)
         payload = {
             "model":       self._chat_model,
             "temperature": LLM_CHAT_TEMPERATURE,
-            "messages":    [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+            "messages":    [{"role": "system", "content": SYSTEM_PROMPT}] + sanitized,
         }
         try:
             r = self._post(payload)
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
+            data = r.json()
+            if "choices" not in data or not data["choices"]:
+                return "[LLM Error: Response contained no choices]"
+            return data["choices"][0]["message"]["content"].strip()
         except Exception as e: return f"[LLM Error: {e}]"
     # Summarize 
     def summarize(self, text: str) -> str:

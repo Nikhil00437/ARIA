@@ -61,10 +61,45 @@ class Database:
         if not self.ok: return []
         return list(
             self._db[COL_SESSIONS]
-            .find({}, {"session_id": 1, "created": 1, "_id": 0})
+            .find({}, {"session_id": 1, "created": 1, "title": 1, "_id": 0})
             .sort("created", DESCENDING)
             .limit(limit)
         )
+
+    def save_session_title(self, session_id: str, title: str):
+        if not self.ok: return
+        self._db[COL_SESSIONS].update_one(
+            {"session_id": session_id},
+            {"$set": {"title": title}},
+        )
+
+    def generate_session_title(self, session_id: str) -> str:
+        if not self.ok: return ""
+        doc = self._db[COL_SESSIONS].find_one({"session_id": session_id})
+        if not doc: return ""
+        messages = doc.get("messages", [])
+        for msg in messages:
+            if msg.get("role") == "user":
+                content = msg.get("content", "").strip()
+                if len(content) > 60:
+                    return content[:57] + "..."
+                return content
+        return "New Session"
+
+    def save_last_session(self, session_id: str):
+        if not self.ok: return
+        self._db["app_meta"].update_one(
+            {"key": "last_session_id"},
+            {"$set": {"value": session_id, "updated": datetime.datetime.utcnow()}},
+            upsert=True,
+        )
+
+    def get_last_session(self) -> Optional[str]:
+        if not self.ok: return None
+        doc = self._db["app_meta"].find_one({"key": "last_session_id"})
+        if doc:
+            return doc.get("value")
+        return None
     # Command Logs
     def log_command(self, session_id: str, command: str, output: str, success: bool):
         if not self.ok: return

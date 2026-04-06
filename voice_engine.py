@@ -40,10 +40,8 @@ class VoiceEngine:
             self._tts_engine = None
 
     def _ensure_whisper(self):
-        if self._whisper is not None or not STT_AVAILABLE:
-            return
-        try:
-            self._whisper = WhisperModel("tiny", device="cpu", compute_type="int8")
+        if self._whisper is not None or not STT_AVAILABLE: return
+        try: self._whisper = WhisperModel("tiny", device="cpu", compute_type="int8")
         except Exception as e:
             print(f"[STT] Whisper load failed: {e}")
             self._whisper = None

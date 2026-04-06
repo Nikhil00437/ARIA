@@ -28,6 +28,83 @@ class BehavioralInferencer:
         # Filter by confidence
         patterns = [p for p in patterns if p.get("confidence", 0) >= self.MIN_CONFIDENCE]
         return patterns[:5]  # Max 5 proposals at a time
+
+    def analyze_from_text(self, raw_text: str) -> list:
+        interactions = self._parse_conversation_text(raw_text)
+        if len(interactions) < self.MIN_INTERACTIONS: return []
+        patterns = []
+        # Tier 1: Rule-based fast detection
+        rule_patterns = self._rule_based_analysis(interactions)
+        patterns.extend(rule_patterns)
+        # Tier 2: LLM deep analysis
+        llm_patterns = self._llm.infer_behavioral_patterns(interactions, n=50)
+        for p in llm_patterns:
+            if self._validate_pattern(p): patterns.append(p)
+        # Deduplicate by param_key (keep highest confidence)
+        patterns = self._deduplicate(patterns)
+        # Filter by confidence
+        patterns = [p for p in patterns if p.get("confidence", 0) >= self.MIN_CONFIDENCE]
+        return patterns[:5]
+
+    def _parse_conversation_text(self, text: str) -> list:
+        lines = text.split("\n")
+        interactions = []
+        current_role = None
+        current_content = []
+
+        def _flush():
+            nonlocal current_role, current_content
+            if current_role and current_content:
+                content = "\n".join(current_content).strip()
+                if content:
+                    interactions.append({
+                        "type": "chat",
+                        "role": current_role,
+                        "content": content,
+                    })
+            current_content = []
+
+        user_patterns = [
+            re.compile(r"^(User|Human|You|Customer|Prompt)\s*[:\-\–]\s*", re.IGNORECASE),
+            re.compile(r"^#{1,3}\s*(User|Human|You)\b", re.IGNORECASE),
+            re.compile(r"^\*\*(User|Human|You)\*\*\s*[:\-\–]?\s*", re.IGNORECASE),
+        ]
+        assistant_patterns = [
+            re.compile(r"^(Assistant|AI|Model|Bot|Aria|ARIA)\s*[:\-\–]\s*", re.IGNORECASE),
+            re.compile(r"^#{1,3}\s*(Assistant|AI|Model)\b", re.IGNORECASE),
+            re.compile(r"^\*\*(Assistant|AI|Model|Bot|Aria|ARIA)\*\*\s*[:\-\–]?\s*", re.IGNORECASE),
+        ]
+
+        for line in lines:
+            matched = False
+            for pat in user_patterns:
+                m = pat.match(line)
+                if m:
+                    _flush()
+                    current_role = "user"
+                    line = line[m.end():]
+                    matched = True
+                    break
+            if not matched:
+                for pat in assistant_patterns:
+                    m = pat.match(line)
+                    if m:
+                        _flush()
+                        current_role = "assistant"
+                        line = line[m.end():]
+                        matched = True
+                        break
+
+            if matched:
+                if line.strip():
+                    current_content.append(line.strip())
+            else:
+                if current_role is None:
+                    current_role = "user"
+                current_content.append(line)
+
+        _flush()
+        return interactions
     # Rule-Based Analysis
     def _rule_based_analysis(self, interactions: list) -> list:
         patterns = []

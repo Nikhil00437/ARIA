@@ -147,12 +147,24 @@ def generate_health_alerts(snap: dict) -> list:
     return alerts
 # Music playback (via default player)
 def play_music(query: str) -> Tuple[bool, str]:
-    q = urllib.parse.quote(query)
-    # Try Spotify URI first, fall back to YouTube
-    try:
-        subprocess.Popen(["spotify", f"spotify:search:{query}"], shell=True)
-        return True, f"Opening Spotify for: {query}"
-    except Exception:
-        url = f"https://www.youtube.com/results?search_query={q}"
-        webbrowser.open(url)
-        return True, f"Searching YouTube Music for: {query}"
+    music_dir = r"C:\Users\Nikhil\Music\Music"
+    if not os.path.isdir(music_dir): return False, f"Music directory not found: {music_dir}"
+    audio_ext = (".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma")
+    matched = []
+    query_lower = query.lower()
+    for root, dirs, files in os.walk(music_dir):
+        for f in files:
+            if f.lower().endswith(audio_ext):
+                if query_lower in f.lower(): matched.append(os.path.join(root, f))
+    if not matched:
+        all_files = []
+        for root, dirs, files in os.walk(music_dir):
+            for f in files:
+                if f.lower().endswith(audio_ext): all_files.append(os.path.join(root, f))
+        if not all_files: return False, "No music files found in your library."
+        file_to_play = all_files[0]
+        subprocess.Popen(["start", "", file_to_play], shell=True)
+        return True, f"No match for '{query}', playing: {os.path.basename(file_to_play)}"
+    file_to_play = matched[0]
+    subprocess.Popen(["start", "", file_to_play], shell=True)
+    return True, f"Playing: {os.path.basename(file_to_play)}"
