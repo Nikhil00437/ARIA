@@ -26,11 +26,10 @@ def generate_image_async(prompt: str, signals, output_dir: str = None):
             ).images[0]
 
             # Save
-            if not output_dir:
-                output_dir = os.path.join(os.path.expanduser("~"), "Desktop")
-            os.makedirs(output_dir, exist_ok=True)
+            dir = output_dir or os.path.join(os.path.expanduser("~"), "Desktop")
+            os.makedirs(dir, exist_ok=True)
             ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = os.path.join(output_dir, f"aria_gen_{ts}.png")
+            path = os.path.join(dir, f"aria_gen_{ts}.png")
             image.save(path)
             signals.chat_response.emit("assistant", f"✅ Image saved to `{path}`")
             signals.timeline_event.emit("image_gen", f"Saved: {path}")

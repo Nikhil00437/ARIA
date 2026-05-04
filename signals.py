@@ -34,6 +34,13 @@ class ARIASignals(QObject):
     confirm_request    = pyqtSignal(str, str)   # (cmd, display_text)
     # Session
     session_loaded     = pyqtSignal(str)        # session_id
+    # System
+    llm_status         = pyqtSignal(bool)      # online status
+    # UI Feedback
+    toast_show          = pyqtSignal(str, str)   # (message, type)
+    loading_start       = pyqtSignal(str)       # loading message
+    loading_stop        = pyqtSignal()
+    error_display       = pyqtSignal(str, str)   # (title, message)
 
 class HealthMonitor(QObject):
     def __init__(self, signals: ARIASignals, parent=None):
@@ -60,8 +67,7 @@ class HealthMonitor(QObject):
                 for name, mb in alerts[:3]:
                     msg = f"{name} is consuming {mb:.0f} MB RAM"
                     self._signals.warning_added.emit("warning", msg)
-            # CPU spike
-            cpu = psutil.cpu_percent(interval=1)
+            cpu = psutil.cpu_percent(interval=None)
             if cpu > 90: self._signals.warning_added.emit("error", f"CPU usage critical: {cpu:.0f}%")
             elif cpu > 75: self._signals.warning_added.emit("warning", f"CPU usage high: {cpu:.0f}%")
         except Exception as e: self._signals.warning_added.emit("info", f"Health check error: {e}")

@@ -47,9 +47,9 @@ class ProposalCard(QWidget):
 
         val_label = QLabel(f"  {proposal.get('param_value')}  ")
         val_label.setStyleSheet(
-            "background: #00e5cc12;"
-            "color: #00e5cc;"
-            "border: 1px solid #00e5cc40;"
+            "background: rgba(80,200,120,0.10);"
+            "color: rgba(80,200,120,0.9);"
+            "border: 1px solid rgba(80,200,120,0.30);"
             "border-radius: 6px;"
             "padding: 2px 10px;"
             "font-family: 'Cascadia Code', 'Consolas', monospace;"
@@ -101,9 +101,9 @@ class LedgerEntryWidget(QWidget):
         layout.setContentsMargins(14, 8, 14, 8)
         layout.setSpacing(10)
         # Status icon
-        if rolled:      icon_text, icon_color = "↩", "#f59e0b"
-        elif rejected:  icon_text, icon_color = "✕", "#ef4444"
-        else:           icon_text, icon_color = "✓", "#00e5cc"
+        if rolled:      icon_text, icon_color = "↩", "rgba(255,180,40,0.9)"
+        elif rejected:  icon_text, icon_color = "✕", "rgba(255,80,80,0.9)"
+        else:           icon_text, icon_color = "✓", "rgba(80,200,120,0.9)"
 
         icon = QLabel(icon_text)
         icon.setFixedWidth(18)
@@ -114,13 +114,13 @@ class LedgerEntryWidget(QWidget):
         label = entry.get("param_label", entry.get("param_key", "?"))
         if not rejected and not rolled: change_html = (
                 f"<b>{label}</b>"
-                f"  <span style='color:#6366f1;'>→</span>  "
-                f"<code style='color:#00e5cc;'>{entry.get('new_value')}</code>"
-                f"  <span style='color:#2e4560;font-size:8pt;'>"
+                f"  <span style='color:rgba(140,120,255,0.9);'>→</span>  "
+                f"<code style='color:rgba(80,200,120,0.9);'>{entry.get('new_value')}</code>"
+                f"  <span style='color:rgba(255,255,255,0.35);font-size:8pt;'>"
                 f"was <code>{entry.get('old_value')}</code></span>"
             )
-        elif rejected: change_html = f"<b>{label}</b>  <span style='color:#ef4444;'>rejected</span>"
-        else: change_html = f"<b>{label}</b>  <span style='color:#f59e0b;'>rolled back</span>"
+        elif rejected: change_html = f"<b>{label}</b>  <span style='color:rgba(255,80,80,0.85);'>rejected</span>"
+        else: change_html = f"<b>{label}</b>  <span style='color:rgba(255,180,40,0.85);'>rolled back</span>"
 
         change_label = QLabel(change_html)
         change_label.setObjectName("ProposalMeta")
@@ -158,14 +158,14 @@ class ActiveModWidget(QWidget):
         dot = QLabel("◉")
         dot.setFixedWidth(16)
         dot.setAlignment(Qt.AlignCenter)
-        dot.setStyleSheet("color: #00e5cc; background: transparent; font-size: 9pt;")
+        dot.setStyleSheet("color: rgba(80,200,120,0.9); background: transparent; font-size: 9pt;")
         layout.addWidget(dot)
 
         key   = entry.get("param_label", entry.get("param_key", "?"))
         value = entry.get("new_value", "?")
         label = QLabel(
             f"<b>{key}</b>  "
-            f"<code style='color:#00e5cc;'>{value}</code>"
+            f"<code style='color:rgba(80,200,120,0.9);'>{value}</code>"
         )
         label.setObjectName("ProposalText")
         label.setTextFormat(Qt.RichText)
@@ -191,7 +191,7 @@ class SelfModPage(QWidget):
 
         accent = QFrame()
         accent.setFixedHeight(3)
-        accent.setStyleSheet("background: #a855f7;")
+        accent.setStyleSheet("background: rgba(160,80,255,0.7); border: none;")
         layout.addWidget(accent)
 
         inner = QWidget()

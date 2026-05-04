@@ -6,10 +6,23 @@ from PyQt5.QtWidgets import (
     QLineEdit, QScrollArea, QSplitter, QTextEdit, QSizePolicy,
     QFrame
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QObject
 from PyQt5.QtGui import QFont, QTextCursor
 
 from pattern_engine import list_patterns, load_pattern, search_patterns, run_pattern_stream
+
+
+class _PatternWorker(QObject):
+    """Signals for pattern loading from background thread."""
+    loaded = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+
+class _StreamWorker(QObject):
+    """Signals for pattern streaming from background thread."""
+    chunk = pyqtSignal(str)
+    done = pyqtSignal()
+    error = pyqtSignal(str)
 
 
 class PatternCard(QWidget):
@@ -71,7 +84,7 @@ class PatternsPage(QWidget):
         # Accent bar at top
         accent = QFrame()
         accent.setFixedHeight(3)
-        accent.setStyleSheet("background: #10b981;")
+        accent.setStyleSheet("background: rgba(80,200,120,0.7); border: none;")
         # Wrap everything vertically with accent on top
         wrapper = QVBoxLayout()
         wrapper.setContentsMargins(0, 0, 0, 0)
@@ -227,9 +240,16 @@ class PatternsPage(QWidget):
 
     # Pattern loading
     def _load_patterns(self):
+        self._pattern_worker = _PatternWorker()
+        self._pattern_worker.loaded.connect(self._populate_list)
+
         def _run():
-            patterns = list_patterns()
-            QTimer.singleShot(0, lambda: self._populate_list(patterns))
+            try:
+                patterns = list_patterns()
+                self._pattern_worker.loaded.emit(patterns)
+            except Exception as e:
+                self._pattern_worker.error.emit(str(e))
+
         threading.Thread(target=_run, daemon=True).start()
 
     def _populate_list(self, patterns: list):
@@ -309,13 +329,18 @@ class PatternsPage(QWidget):
         my_gen = self._gen
 
         def _stream():
+            self._stream_worker = _StreamWorker()
+            self._stream_worker.chunk.connect(self._append_chunk)
+            self._stream_worker.done.connect(self._on_done)
+            self._stream_worker.error.connect(self._on_error)
             try:
                 for chunk in run_pattern_stream(self._current, user_input, self._llm):
                     if self._gen != my_gen:
                         return
-                    QTimer.singleShot(0, lambda c=chunk: self._append_chunk(c))
-                QTimer.singleShot(0, lambda: self._on_done())
-            except Exception as e: QTimer.singleShot(0, lambda: self._on_error(str(e)))
+                    self._stream_worker.chunk.emit(chunk)
+                self._stream_worker.done.emit()
+            except Exception as e:
+                self._stream_worker.error.emit(str(e))
 
         threading.Thread(target=_stream, daemon=True).start()
 

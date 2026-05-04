@@ -1,6 +1,6 @@
 # LM Studio
 LM_STUDIO_BASE_URL   = "http://localhost:1234/v1"
-CHAT_MODEL           = "qwen3.5-9b-uncensored-hauhaucs-aggressive"
+CHAT_MODEL           = "qwen/qwen3.5-9b"
 CLASSIFIER_MODEL     = "intent"
 LLM_TIMEOUT          = 30
 LLM_CHAT_TEMPERATURE = 0.7
@@ -10,9 +10,11 @@ LLM_CLASS_TEMPERATURE= 0.1
 MONGO_URI    = "mongodb://localhost:27017"
 MONGO_DB     = "aria_db"
 COL_SESSIONS = "sessions"
+COL_MESSAGES = "messages"
 COL_COMMANDS = "command_logs"
 COL_SELFMOD  = "selfmod_ledger"
 COL_PROFILE  = "behavioral_profile"
+COL_USAGE    = "usage_stats"
 
 # Themes
 THEMES = {

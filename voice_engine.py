@@ -8,9 +8,16 @@ except ImportError: TTS_AVAILABLE = False
 try:
     import sounddevice as sd
     import soundfile as sf
-    from faster_whisper import WhisperModel
     STT_AVAILABLE = True
 except ImportError: STT_AVAILABLE = False
+
+# Try to import faster_whisper, but handle failure gracefully
+try:
+    from faster_whisper import WhisperModel
+    WHISPER_AVAILABLE = True
+except Exception as WHISPER_ERROR:
+    WHISPER_AVAILABLE = False
+    print(f"[Voice] Whisper not available: {WHISPER_ERROR}")
 
 class VoiceEngine:
     def __init__(self, signals):
@@ -21,26 +28,29 @@ class VoiceEngine:
         self._tts_lock   = threading.Lock()
         self._silent_mode = False
 
-        self._init_tts()
-    # Init
-    def _init_tts(self):
-        if not TTS_AVAILABLE: return
-        try:
-            self._tts_engine = pyttsx3.init()
-            self._tts_engine.setProperty("rate", 175)
-            self._tts_engine.setProperty("volume", 0.9)
-            # Prefer a female voice if available
-            voices = self._tts_engine.getProperty("voices")
-            for v in voices:
-                if "zira" in v.name.lower() or "female" in v.name.lower():
-                    self._tts_engine.setProperty("voice", v.id)
-                    break
-        except Exception as e:
-            print(f"[TTS] Init failed: {e}")
-            self._tts_engine = None
+        self._init_tts_async()
+
+    def _init_tts_async(self):
+        def _run():
+            if not TTS_AVAILABLE: return
+            try:
+                engine = pyttsx3.init()
+                engine.setProperty("rate", 175)
+                engine.setProperty("volume", 0.9)
+                voices = engine.getProperty("voices")
+                for v in voices:
+                    if "zira" in v.name.lower() or "female" in v.name.lower():
+                        engine.setProperty("voice", v.id)
+                        break
+                self._tts_engine = engine
+            except Exception as e:
+                print(f"[TTS] Init failed: {e}")
+                self._tts_engine = None
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
 
     def _ensure_whisper(self):
-        if self._whisper is not None or not STT_AVAILABLE: return
+        if self._whisper is not None or not WHISPER_AVAILABLE: return
         try: self._whisper = WhisperModel("tiny", device="cpu", compute_type="int8")
         except Exception as e:
             print(f"[STT] Whisper load failed: {e}")

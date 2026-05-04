@@ -1,4 +1,9 @@
 import sys, os
+import warnings
+
+# Suppress pynvml deprecation warning from torch.cuda
+warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda")
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

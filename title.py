@@ -1,7 +1,9 @@
-# title.py — Clean minimal title bar
+# title.py — Glassy minimal frosted title bar
 
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QFont
+
 
 class TitleBar(QWidget):
     settings_requested = pyqtSignal()
@@ -9,17 +11,17 @@ class TitleBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("TitleBar")
-        self.setFixedHeight(44)
-        self._drag_pos  = None
+        self.setFixedHeight(48)
+        self._drag_pos = None
         self._parent_window = parent
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(18, 0, 4, 0)
+        layout.setContentsMargins(20, 0, 6, 0)
         layout.setSpacing(0)
 
-        # Left: logo + title
-        left_row = QHBoxLayout()
-        left_row.setSpacing(10)
+        # ── Left: logo + wordmark ─────────────────────────────────
+        left = QHBoxLayout()
+        left.setSpacing(10)
 
         self._logo = QLabel("◈")
         self._logo.setObjectName("TitleLogo")
@@ -30,42 +32,50 @@ class TitleBar(QWidget):
         self._subtitle = QLabel("Runtime Intelligence")
         self._subtitle.setObjectName("TitleSubtitle")
 
-        left_row.addWidget(self._logo)
-        left_row.addWidget(self._title)
-        left_row.addWidget(self._subtitle)
-        left_row.addStretch()
+        # Soft vertical divider
+        div = QLabel("·")
+        div.setStyleSheet(
+            "color: rgba(255,255,255,0.18); font-size: 14px; "
+            "padding: 0 4px; background: transparent;"
+        )
 
-        layout.addLayout(left_row, 1)
+        left.addWidget(self._logo)
+        left.addWidget(self._title)
+        left.addWidget(div)
+        left.addWidget(self._subtitle)
+        left.addStretch()
 
-        # Right: settings + window controls
-        right_row = QHBoxLayout()
-        right_row.setSpacing(0)
+        layout.addLayout(left, 1)
 
-        self._btn_settings = self._make_btn("⚙", "TitleBtnSettings", self._open_settings)
+        # ── Right: controls ───────────────────────────────────────
+        right = QHBoxLayout()
+        right.setSpacing(2)
 
-        sep = QLabel("│")
-        sep.setStyleSheet("color: rgba(255,255,255,0.08); font-size: 14px; padding: 0 6px; background: transparent;")
+        self._btn_settings = self._btn("⚙", "TitleBtnSettings", self._open_settings)
+        sep = QLabel()
+        sep.setFixedWidth(1)
+        sep.setFixedHeight(18)
+        sep.setStyleSheet("background: rgba(255,255,255,0.10); margin: 0 6px;")
 
-        self._btn_min   = self._make_btn("─", "TitleBtn",      self._minimize)
-        self._btn_max   = self._make_btn("□", "TitleBtn",      self._maximize)
-        self._btn_close = self._make_btn("✕", "TitleBtnClose", self._close_win)
+        self._btn_min   = self._btn("⎯", "TitleBtn", self._minimize)
+        self._btn_max   = self._btn("□", "TitleBtn", self._maximize)
+        self._btn_close = self._btn("✕", "TitleBtnClose", self._close_win)
 
-        right_row.addWidget(self._btn_settings)
-        right_row.addWidget(sep)
-        right_row.addWidget(self._btn_min)
-        right_row.addWidget(self._btn_max)
-        right_row.addWidget(self._btn_close)
+        right.addWidget(self._btn_settings)
+        right.addWidget(sep)
+        right.addWidget(self._btn_min)
+        right.addWidget(self._btn_max)
+        right.addWidget(self._btn_close)
 
-        layout.addLayout(right_row)
+        layout.addLayout(right)
 
-    def _make_btn(self, text: str, obj_name: str, slot) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setObjectName(obj_name)
-        btn.setFixedSize(46, 44)
-        btn.clicked.connect(slot)
-        return btn
+    def _btn(self, text, obj_name, slot):
+        b = QPushButton(text)
+        b.setObjectName(obj_name)
+        b.setFixedSize(44, 44)
+        b.clicked.connect(slot)
+        return b
 
-    # Actions
     def _open_settings(self): self.settings_requested.emit()
 
     def _minimize(self):
@@ -83,11 +93,12 @@ class TitleBar(QWidget):
     def _close_win(self):
         if self._parent_window: self._parent_window.close()
 
-    # Drag to move
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton: self._drag_pos = event.globalPos() - self._parent_window.frameGeometry().topLeft()
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag_pos = e.globalPos() - self._parent_window.frameGeometry().topLeft()
 
-    def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton and self._drag_pos: self._parent_window.move(event.globalPos() - self._drag_pos)
+    def mouseMoveEvent(self, e):
+        if e.buttons() == Qt.LeftButton and self._drag_pos:
+            self._parent_window.move(e.globalPos() - self._drag_pos)
 
-    def mouseDoubleClickEvent(self, event): self._maximize()
+    def mouseDoubleClickEvent(self, e): self._maximize()

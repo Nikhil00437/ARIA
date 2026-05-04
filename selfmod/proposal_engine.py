@@ -126,16 +126,16 @@ class ProposalEngine:
             try:
                 v = float(value)
                 if not (spec["min"] <= v <= spec["max"]): return False, f"Value {v} out of range [{spec['min']}, {spec['max']}]"
-            except (TypeError, ValueError): return False, f"Value must be a float."
+            except (TypeError, ValueError): return False, "Value must be a float."
         elif ptype == "int":
             try:
                 v = int(value)
                 if not (spec["min"] <= v <= spec["max"]): return False, f"Value {v} out of range [{spec['min']}, {spec['max']}]"
-            except (TypeError, ValueError): return False, f"Value must be an integer."
+            except (TypeError, ValueError): return False, "Value must be an integer."
         elif ptype == "bool":
-            if not isinstance(value, bool): return False, f"Value must be boolean (true/false)."
+            if not isinstance(value, bool): return False, "Value must be boolean (true/false)."
         elif ptype == "list":
-            if not isinstance(value, list): return False, f"Value must be a list."
+            if not isinstance(value, list): return False, "Value must be a list."
         elif ptype == "dict":
             if not isinstance(value, dict): return False, f"Value must be a dict."
         return True, ""
