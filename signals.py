@@ -41,6 +41,19 @@ class ARIASignals(QObject):
     loading_start       = pyqtSignal(str)       # loading message
     loading_stop        = pyqtSignal()
     error_display       = pyqtSignal(str, str)   # (title, message)
+    # Agent harness (Phase 1)
+    agent_task_started    = pyqtSignal(str, str)   # (task_id, goal)
+    agent_plan_ready      = pyqtSignal(str, str)   # (task_id, plan_text)
+    agent_step            = pyqtSignal(str, dict)  # (task_id, step_dict)
+    agent_tool_call       = pyqtSignal(str, str, str)  # (task_id, tool, args_json)
+    agent_tool_result     = pyqtSignal(str, str, str)  # (task_id, tool, result_json)
+    agent_approval_request = pyqtSignal(str, dict) # (approval_id, action_dict)
+    agent_approval_response = pyqtSignal(str, bool) # (approval_id, approved)
+    agent_task_done       = pyqtSignal(str, str, str)  # (task_id, status, summary)
+    agent_cancel          = pyqtSignal(str)        # (task_id)
+    # Self-mod brain (Phase 9)
+    selfmod_insights_changed = pyqtSignal(list)   # list of insight dicts
+    selfmod_badge_changed    = pyqtSignal(int)   # pending count (proposals + new insights)
 
 class HealthMonitor(QObject):
     def __init__(self, signals: ARIASignals, parent=None):

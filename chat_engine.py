@@ -4,10 +4,14 @@ from tools import AVAILABLE_TOOLS, execute_tool
 from extract import nl_to_powershell, system_snapshot, format_snapshot, play_music, needs_confirmation
 from executor import CommandExecutor
 from image_generation import generate_image_async
-from constants import SUGGESTION_POOLS, FABRIC_QUICK_PATTERNS
+from constants import SUGGESTION_POOLS, FABRIC_QUICK_PATTERNS, AGENT_CHAT_MAX_STEPS
+from logger import get_logger
 from fabric_client import FabricClient, FABRIC_PATTERNS
-from pattern_engine import load_pattern, list_patterns, run_pattern_stream
-from security import InputSanitizer, OutputFormatter, get_rate_limiter
+from pattern_engine import list_patterns, run_pattern_stream
+from agent import AgentRunner
+
+logger = get_logger("chat_engine")
+from security import InputSanitizer, get_rate_limiter
 
 class ChatEngine:
     def __init__(self, db, llm_client, signals, selfmod_controller=None, voice_engine=None):
@@ -18,6 +22,7 @@ class ChatEngine:
         self._voice      = voice_engine
         self._executor   = CommandExecutor()
         self._fabric     = FabricClient()
+        self._agent      = AgentRunner(llm_client, db, signals=signals)
         self._confirm_pending: Optional[dict] = None
         self._message_count = 0
         self._gen = 0
@@ -83,6 +88,7 @@ class ChatEngine:
             "fabric":       self._handle_fabric,
             "history":      self._handle_history_intent,
             "rerun":        self._handle_rerun_intent,
+            "agent":        self._handle_agent_intent,
         }.get(mode, self._handle_chat)(text, session_id, history)
         # Selfmod milestone check
         if self._selfmod and self._message_count % 15 == 0:
@@ -93,8 +99,6 @@ class ChatEngine:
 
     def _check_auto_summarize(self, session_id: str, history: list):
         """Check if conversation needs auto-summarization."""
-        import time
-
         # Check cooldown
         current_time = time.time()
         if current_time - self._last_summary_time < self._summary_cooldown:
@@ -128,7 +132,7 @@ class ChatEngine:
                 )
                 self._signals.status_update.emit("Ready")
             except Exception as e:
-                print(f"[Auto-summarize] Error: {e}")
+                logger.warning("Auto-summarize error: %s", e)
 
         threading.Thread(target=_summarize, daemon=True).start()
 
@@ -307,6 +311,8 @@ class ChatEngine:
                 "`/fabric path <path>` \u2014 Set Fabric binary path manually\n\n"
                 "`/pattern list` \u2014 List local pattern files\n\n"
                 "`/pattern <name> <text>` \u2014 Run a local pattern\n\n"
+                "`/agent <goal>` \u2014 Start a multi-step coding agent task\n\n"
+                "`/brain` \u2014 Trigger an ARIA Brain analysis (self-mod)\n\n"
                 "`/help` \u2014 This message"
             )
             return
@@ -329,13 +335,20 @@ class ChatEngine:
             user_input   = (m.group(2) or "").strip()
             self._run_pattern(pattern_name, user_input, session_id)
             return
+        # Agent slash command
+        m = re.match(r"/agent\s+(.+)", text, re.DOTALL | re.I)
+        if m:
+            self._handle_agent_intent(m.group(1).strip(), session_id, [])
+            return
+        # Phase 9: /brain — trigger a self-mod analysis from chat.
+        m = re.match(r"/brain\b", text, re.I)
+        if m:
+            self._handle_brain_intent(session_id)
+            return
         self._emit(f"Unknown command: `{text}`. Try `/help`.")
 
     def _handle_export(self, cmd: str, session_id: str):
         """Handle export commands."""
-        import os
-        import json
-
         parts = cmd.split()
         if len(parts) < 2:
             self._emit("Usage: `/export json` or `/export md`")
@@ -604,6 +617,65 @@ class ChatEngine:
         self._signals.status_update.emit(f"Re-running: {entry['command']}")
         self._run_command(entry["command"], session_id, use_ps=False)
 
+    def _handle_agent_intent(self, text: str, session_id: str, history: list):
+        """Hand off a multi-step coding task to the AgentRunner.
+
+        In Phase 1 this is a lightweight chat delegation: the task runs on a
+        daemon thread, emits lifecycle signals, and ends with a final answer
+        streamed into the chat. The approval requests are also emitted as
+        signals; the UI (or tests) resolve them via ``resolve_agent_approval``.
+        """
+        goal = text.strip()
+        if not goal:
+            self._emit("Please provide a goal for the agent, e.g. `/agent find all TODO comments`.")
+            return
+
+        self._signals.typing_indicator.emit(True)
+        self._signals.status_update.emit(f"Agent task: {goal[:60]}...")
+        try:
+            task_id = self._agent.run(
+                goal=goal,
+                session_id=session_id,
+                max_steps=AGENT_CHAT_MAX_STEPS,
+            )
+            self._emit(
+                f"\U0001f916 **Agent task started** — `{task_id[:8]}...`\n\n"
+                f"Goal: {goal}\n\n"
+                f"Switch to the **Agent** page to view progress, or watch inline here."
+            )
+        except Exception as e:
+            logger.exception("Agent intent failed: %s", e)
+            self._emit(f"\u274c Failed to start agent task: {e}")
+        finally:
+            self._signals.typing_indicator.emit(False)
+
+    def _handle_brain_intent(self, session_id: str) -> None:
+        """Phase 9: manually trigger a self-mod analysis from chat."""
+        if not self._selfmod:
+            self._emit("Self-mod is not available right now.")
+            return
+        try:
+            proposals = self._selfmod.analyze_sync(session_id)
+            if not proposals:
+                self._emit(
+                    "\U0001f9e0 **Brain analysis** — no patterns above the confidence "
+                    "threshold yet. Keep using ARIA naturally and try again later."
+                )
+                return
+            self._emit(
+                f"\U0001f9e0 **Brain analysis complete** — {len(proposals)} suggestion"
+                f"{'s' if len(proposals) != 1 else ''} ready. "
+                f"Visit the **Self-Mod** page to review."
+            )
+        except Exception as e:
+            logger.exception("Brain intent failed: %s", e)
+            self._emit(f"\u274c Brain analysis failed: {e}")
+
+    def resolve_agent_approval(self, approval_id: str, approved: bool) -> None:
+        """Public bridge so main_window can wire ``agent_approval_response``
+        to the AgentRunner."""
+        self._agent.resolve_approval(approval_id, approved)
+
     def _handle_fabric_slash(self, text: str, session_id: str):
         remainder = re.sub(r"^/fabric\s*", "", text, flags=re.I).strip()
 
@@ -750,7 +822,7 @@ class ChatEngine:
         # Sanitize output for safe display
         sanitized = self._sanitizer.sanitize_markdown(text)
         if sanitized.was_modified:
-            print(f"[Security] Output sanitized: {sanitized.warnings}")
+            logger.info("Output sanitized: %s", sanitized.warnings)
         self._signals.chat_response.emit("assistant", sanitized.text)
         if self._voice and force_speak: self._voice.speak(text, force=True)
 

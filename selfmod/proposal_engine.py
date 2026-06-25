@@ -1,6 +1,9 @@
 import uuid, datetime
 from typing import Optional
+from logger import get_logger
 from constants import SELFMOD_LOCKED_PARAMS
+
+logger = get_logger("proposal_engine")
 
 # The complete set of parameters that CAN be modified.
 # Anything not in this dict is implicitly locked.
@@ -73,13 +76,32 @@ MODIFIABLE_PARAMS = {
         "label":   "Response Length Preference",
         "description": "Whether ARIA leans toward shorter or more comprehensive answers.",
     },
+    # Agent harness (Phase 6) — user-tunable. agent_workspace_root /
+    # agent_command_allowlist / agent_model are deliberately NOT here because
+    # they sit in SELFMOD_LOCKED_PARAMS.
+    "agent_default_mode": {
+        "type":    "choice",
+        "choices": ["plan_apply", "auto_workspace"],
+        "default": "plan_apply",
+        "label":   "Agent Default Mode",
+        "description": "Whether the agent requires approval for every write (plan_apply) or auto-approves workspace writes (auto_workspace).",
+    },
+    "agent_max_steps": {
+        "type":    "int",
+        "min":     1,
+        "max":     100,
+        "default": 25,
+        "label":   "Agent Max Steps",
+        "description": "Maximum act→observe iterations per agent task before stopping.",
+    },
 }
 
 class Proposal:
-    def __init__(self, param_key: str, param_value, pattern: dict, proposal_text: str):
+    def __init__(self, param_key: str, param_value, pattern: dict, proposal_text: str, current_value=None):
         self.id           = str(uuid.uuid4())[:8]
         self.param_key    = param_key
         self.param_value  = param_value
+        self.current_value = current_value  # snapshot of value before this proposal
         self.pattern      = pattern
         self.proposal_text= proposal_text
         self.confidence   = pattern.get("confidence", 0.0)
@@ -93,6 +115,7 @@ class Proposal:
             "id":            self.id,
             "param_key":     self.param_key,
             "param_value":   self.param_value,
+            "current_value": self.current_value,
             "param_label":   spec.get("label", self.param_key),
             "param_desc":    spec.get("description", ""),
             "proposal_text": self.proposal_text,
@@ -149,13 +172,17 @@ class ProposalEngine:
         # Validate value
         valid, err = self.validate_value(param_key, param_value)
         if not valid:
-            print(f"[ProposalEngine] Invalid value for {param_key}: {err}")
+            logger.warning("Invalid value for %s: %s", param_key, err)
             return None
         # Generate human-readable proposal text
         proposal_text = self._llm.generate_proposal_text(pattern)
+        # Snapshot the current value (defaults from the spec) for the
+        # before/after comparison shown on the proposal card.
+        current_value = MODIFIABLE_PARAMS.get(param_key, {}).get("default")
         return Proposal(
             param_key=param_key,
             param_value=param_value,
             pattern=pattern,
             proposal_text=proposal_text,
+            current_value=current_value,
         )

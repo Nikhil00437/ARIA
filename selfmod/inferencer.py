@@ -1,4 +1,6 @@
 import re
+import time
+import uuid
 from typing import Optional
 from constants import SELFMOD_LOCKED_PARAMS
 
@@ -7,44 +9,88 @@ class BehavioralInferencer:
     MIN_INTERACTIONS = 10
     # Confidence threshold below which patterns are discarded
     MIN_CONFIDENCE = 0.65
+    # Cap on insights returned by ``observe()`` to avoid flooding the feed.
+    MAX_OBSERVATIONS = 50
 
     def __init__(self, db, llm_client):
         self._db  = db
         self._llm = llm_client
     # Public API
-    def analyze(self, session_id: str) -> list:
+
+    def observe(self, session_id: str) -> list:
+        """Return ALL noticed patterns for ``session_id``.
+
+        Distinct from :meth:`analyze` (which kept only the top 5 used for
+        proposals). ``observe`` writes each noticed pattern to the insights
+        feed via ``self._db.save_insight`` so they persist even if they
+        never become a proposal.
+
+        Returns the list of saved insight dicts (newest first).
+        """
         interactions = self._db.get_recent_interactions(session_id, n=60)
-        if len(interactions) < self.MIN_INTERACTIONS: return []
-        patterns = []
-        # Tier 1: Rule-based fast detection
-        rule_patterns = self._rule_based_analysis(interactions)
-        patterns.extend(rule_patterns)
-        # Tier 2: LLM deep analysis
-        llm_patterns = self._llm.infer_behavioral_patterns(interactions, n=50)
-        for p in llm_patterns:
-            if self._validate_pattern(p): patterns.append(p)
-        # Deduplicate by param_key (keep highest confidence)
+        if len(interactions) < self.MIN_INTERACTIONS:
+            return []
+
+        # Tier 1: rule-based
+        patterns = self._rule_based_analysis(interactions)
+
+        # Tier 2: LLM deep analysis — only if rule-based already gave us
+        # < 5 high-confidence patterns (saves cost when heuristics suffice).
+        rule_passed = sum(1 for p in patterns if self._validate_pattern(p))
+        if rule_passed < 5:
+            llm_patterns = self._llm.infer_behavioral_patterns(interactions, n=50)
+            for p in llm_patterns:
+                if self._validate_pattern(p):
+                    patterns.append(p)
+
+        # Dedup by param_key (keep highest confidence) + filter by threshold.
         patterns = self._deduplicate(patterns)
-        # Filter by confidence
         patterns = [p for p in patterns if p.get("confidence", 0) >= self.MIN_CONFIDENCE]
-        return patterns[:5]  # Max 5 proposals at a time
+
+        # Persist as insights.
+        saved = []
+        for p in patterns[: self.MAX_OBSERVATIONS]:
+            insight = dict(p)
+            insight.setdefault("kind", p.get("source", "rule"))
+            insight.setdefault("label", p.get("pattern", p.get("param_key", "?")))
+            insight.setdefault("evidence", p.get("evidence", ""))
+            insight.setdefault("param_key", p.get("param_key"))
+            insight["session_id"] = session_id
+            self._db.save_insight(insight)
+            saved.append(insight)
+        return saved
+
+    def propose(self, patterns: list) -> list:
+        """Pick up to 5 modifiable proposals from a list of noticed patterns.
+
+        Equivalent to the top-5 + dedup + threshold filter the old ``analyze``
+        applied, but operating on an explicit input list (e.g. the insights
+        just observed) instead of re-running inference.
+        """
+        kept = [p for p in patterns if self._validate_pattern(p)]
+        kept = [p for p in kept if p.get("confidence", 0) >= self.MIN_CONFIDENCE]
+        kept = self._deduplicate(kept)
+        return kept[:5]
+
+    def analyze(self, session_id: str) -> list:
+        """Backward-compat shim — returns up to 5 proposals as before."""
+        patterns = self.observe(session_id)
+        return self.propose(patterns)
 
     def analyze_from_text(self, raw_text: str) -> list:
+        """Observe + propose from a free-text conversation dump."""
         interactions = self._parse_conversation_text(raw_text)
-        if len(interactions) < self.MIN_INTERACTIONS: return []
-        patterns = []
-        # Tier 1: Rule-based fast detection
-        rule_patterns = self._rule_based_analysis(interactions)
-        patterns.extend(rule_patterns)
-        # Tier 2: LLM deep analysis
+        if len(interactions) < self.MIN_INTERACTIONS:
+            return []
+        patterns = self._rule_based_analysis(interactions)
         llm_patterns = self._llm.infer_behavioral_patterns(interactions, n=50)
         for p in llm_patterns:
-            if self._validate_pattern(p): patterns.append(p)
-        # Deduplicate by param_key (keep highest confidence)
-        patterns = self._deduplicate(patterns)
-        # Filter by confidence
-        patterns = [p for p in patterns if p.get("confidence", 0) >= self.MIN_CONFIDENCE]
-        return patterns[:5]
+            if self._validate_pattern(p):
+                patterns.append(p)
+        # Persist observed patterns (no session_id — they're from a file).
+        for p in self._deduplicate(patterns)[: self.MAX_OBSERVATIONS]:
+            self._db.save_insight(dict(p))
+        return self.propose(patterns)
 
     def _parse_conversation_text(self, text: str) -> list:
         lines = text.split("\n")

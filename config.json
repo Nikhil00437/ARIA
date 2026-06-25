@@ -1,0 +1,19 @@
+{
+  "_comment": "ARIA configuration — overrides constants.py defaults. Omit any key to use the default. Agent_* keys tune the coding-agent harness (Phase 0+). null means 'use the code default' (e.g. AGENT_MODEL falls back to chat_model).",
+  "lm_studio_base_url": "http://localhost:1234/v1",
+  "chat_model": "qwen/qwen3.5-9b",
+  "mongo_uri": "mongodb://localhost:27017",
+  "mongo_db": "aria_db",
+  "llm_timeout": 30,
+  "llm_chat_temperature": 0.7,
+  "llm_class_temperature": 0.1,
+  "default_theme": "cyber",
+
+  "agent_max_steps": 25,
+  "agent_max_tokens_per_task": 50000,
+  "agent_model": null,
+  "agent_default_mode": "plan_apply",
+  "agent_workspace_root": null,
+  "agent_approval_timeout": 300,
+  "agent_chat_max_steps": 8
+}

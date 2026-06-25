@@ -1,5 +1,6 @@
 import re, json, time, requests
 from typing import Optional, Generator, Dict, List
+from logger import get_logger
 from constants import (
     LM_STUDIO_BASE_URL, CHAT_MODEL, CLASSIFIER_MODEL,
     LLM_TIMEOUT, LLM_CHAT_TEMPERATURE, LLM_CLASS_TEMPERATURE,
@@ -7,6 +8,8 @@ from constants import (
     EXPLAIN_PROMPT, URL_GEN_PROMPT, BEHAVIORAL_INFERENCE_PROMPT,
     PROPOSAL_GENERATION_PROMPT, SEARCH_TEMPLATES, SITE_ALIASES,
 )
+
+logger = get_logger("llm_client")
 from security import get_rate_limiter
 
 # Approximate tokens per character for English text (varies by model)
@@ -74,14 +77,14 @@ class LLMProviderManager:
     def mark_provider_failed(self, name: str):
         """Mark a provider as failed and try the next one."""
         self._provider_status[name] = False
-        print(f"[Provider] {name} marked as failed, trying next provider...")
-        
+        logger.info("Provider %s marked as failed, trying next...", name)
+
         # Find next enabled provider
         for i in range(len(self._providers)):
             next_idx = (self._current_provider_idx + i + 1) % len(self._providers)
             if self._providers[next_idx].get("enabled", False):
                 self._current_provider_idx = next_idx
-                print(f"[Provider] Switched to: {self._providers[next_idx]['name']}")
+                logger.info("Switched to provider: %s", self._providers[next_idx]['name'])
                 return True
         return False
     
@@ -119,6 +122,10 @@ class LLMClient:
         self._max_retries = 2
 
     # Connectivity
+    def set_model(self, model: str) -> None:
+        """Update the chat model used for inference."""
+        self._chat_model = model
+
     def ping(self) -> bool:
         try:
             r = requests.get(f"{self._base}/models", timeout=5)
@@ -186,7 +193,7 @@ class LLMClient:
                 if r.status_code == 429:
                     retry_after = int(r.headers.get('Retry-After', 5))
                     wait_time = min(retry_after, MAX_BACKOFF)
-                    print(f"[LLM] Rate limited. Waiting {wait_time}s before retry...")
+                    logger.warning("Rate limited. Waiting %ds before retry...", wait_time)
                     time.sleep(wait_time)
                     last_status_code = 429
                     continue
@@ -195,7 +202,7 @@ class LLMClient:
                 if r.status_code >= 500:
                     last_status_code = r.status_code
                     backoff = min(INITIAL_BACKOFF * (BACKOFF_MULTIPLIER ** attempt), MAX_BACKOFF)
-                    print(f"[LLM] Server error {r.status_code}. Retrying in {backoff:.1f}s...")
+                    logger.warning("Server error %d. Retrying in %.1fs...", r.status_code, backoff)
                     time.sleep(backoff)
                     continue
                 
@@ -206,13 +213,13 @@ class LLMClient:
             except requests.exceptions.Timeout:
                 last_err = "timeout"
                 backoff = min(INITIAL_BACKOFF * (BACKOFF_MULTIPLIER ** attempt), MAX_BACKOFF)
-                print(f"[LLM] Request timeout. Retrying in {backoff:.1f}s... (attempt {attempt + 1}/{MAX_RETRIES})")
+                logger.warning("Request timeout. Retrying in %.1fs... (attempt %d/%d)", backoff, attempt + 1, MAX_RETRIES)
                 time.sleep(backoff)
                 
             except requests.exceptions.ConnectionError:
                 last_err = "connection_error"
                 backoff = min(INITIAL_BACKOFF * (BACKOFF_MULTIPLIER ** attempt), MAX_BACKOFF)
-                print(f"[LLM] Connection error. Retrying in {backoff:.1f}s... (attempt {attempt + 1}/{MAX_RETRIES})")
+                logger.warning("Connection error. Retrying in %.1fs... (attempt %d/%d)", backoff, attempt + 1, MAX_RETRIES)
                 time.sleep(backoff)
                 
             except requests.exceptions.HTTPError as e:
@@ -311,6 +318,7 @@ class LLMClient:
     # Intent Classification
     _OFFLINE_PATTERNS = [
         (r"^(hi|hello|hey|howdy|yo)\b",                         "chat",        0.99),
+        (r"^/agent\b",                                          "agent",       0.99),
         (r"\bopen\s+\w+\b",                                     "command",     0.90),
         (r"\bplay\s+.+\b",                                      "music",       0.92),
         (r"^https?://",                                         "browser",     0.99),
@@ -321,6 +329,8 @@ class LLMClient:
         (r"\bwho (is|was)\b|\bwhat is (the|a|an) \w+\b",       "wikipedia",   0.75),
         (r"\bgenerate.*(image|picture|photo|art)\b",            "image_gen",   0.93),
         (r"\bexplain.*(code|function|class|error|snippet)\b",   "explain",     0.91),
+        # Agent harness (Phase 1)
+        (r"\b(implement|refactor|build a feature|fix the bug in|add a test for|create a function to|write a script to|update|add a new)\b", "agent", 0.85),
         # Fabric patterns
         (r"^/fabric\b",                                         "fabric",      0.99),
         (r"\bfabric\s+\w+",                                     "fabric",      0.90),
@@ -502,7 +512,7 @@ class LLMClient:
             raw = re.sub(r"```json|```", "", raw).strip()
             patterns = json.loads(raw)
             if isinstance(patterns, list): return patterns
-        except Exception as e: print(f"[Behavioral Inference] Error: {e}")
+        except Exception as e: logger.warning("Behavioral inference error: %s", e)
         return []
 
     def generate_proposal_text(self, pattern: dict) -> str:

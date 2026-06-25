@@ -15,126 +15,209 @@ COL_COMMANDS = "command_logs"
 COL_SELFMOD  = "selfmod_ledger"
 COL_PROFILE  = "behavioral_profile"
 COL_USAGE    = "usage_stats"
+COL_REACTIONS = "reactions"
 
-# Themes
+# Agent harness collections (Phase 2 persistence)
+COL_AGENT_TASKS = "agent_tasks"
+COL_AGENT_STEPS = "agent_steps"
+# Self-mod insight feed (Phase 9 — ARIA Brain)
+COL_INSIGHTS    = "insights"
+
+# Agent harness defaults (Phase 0 config). These tune the AgentRunner loop;
+# all are overridable via config.json (see the override block below).
+AGENT_MAX_STEPS         = 25          # hard cap on act→observe iterations
+AGENT_MAX_TOKENS_PER_TASK = 50000     # soft budget; loop stops when exceeded
+AGENT_MODEL             = None        # None → fall back to CHAT_MODEL
+AGENT_DEFAULT_MODE      = "plan_apply"  # "plan_apply" | "auto_workspace"
+AGENT_WORKSPACE_ROOT    = None        # None → use cwd at runner construction
+AGENT_APPROVAL_TIMEOUT  = 300         # seconds a worker waits for a human yes/no
+AGENT_CHAT_MAX_STEPS    = 8           # lighter cap for chat-delegated runs
+
+# Themes — Linear/Vercel-style minimal dark. The 'cyber' key is repurposed
+# (kept for config-file backward compat) to mean "modern minimal dark".
 THEMES = {
     "cyber": {
-        "bg":        "#07090f",
-        "bg2":       "#0b1018",
-        "bg3":       "#0f1622",
-        "accent":    "#00e5cc",     # electric teal
-        "accent2":   "#6366f1",     # indigo
-        "text":      "#dce6f4",
-        "text2":     "#7a96b0",
-        "dim":       "#2e4560",
-        "border":    "#13243a",
-        "sidebar":   "#050710",
-        "chat_bg":   "#0a0e1a",
-        "term_bg":   "#03060c",
-        "term_text": "#00e5cc",
-        "warning":   "#f59e0b",
-        "error":     "#ef4444",
-        "success":   "#00e5cc",
-        "user_msg":  "#0b1d34",
-        "ai_msg":    "#090e1c",
-        "chat_page":     "#080d1a",
-        "terminal_page": "#060c14",
-        "timeline_page": "#0c0a1e",
-        "warnings_page": "#140a12",
-        "selfmod_page":  "#100818",
-        "patterns_page": "#081018",
-        "sidebar_chat":     "#070d1a",
-        "sidebar_terminal": "#060c14",
-        "sidebar_timeline": "#0a0a1e",
-        "sidebar_warnings": "#140a10",
-        "sidebar_selfmod":  "#0e0818",
-        "sidebar_patterns": "#061018",
-        "glass_chat":     "#0e1628",
-        "glass_terminal": "#0c1420",
-        "glass_timeline": "#12142a",
-        "glass_warnings": "#1a0e18",
-        "glass_selfmod":  "#160c20",
-        "glass_patterns": "#0c1822",
+        "bg":        "#0E0F13",   # base surface
+        "bg2":       "#16181D",   # raised card surface
+        "bg3":       "#1D1F26",   # input / popover
+        "accent":    "#8B8CF7",   # muted indigo (interactive)
+        "accent2":   "#6366F1",   # deeper indigo (pressed/hover)
+        "accent_text": "#0E0F13", # text on accent backgrounds
+        "text":      "#E6E8EE",   # primary text
+        "text2":     "#9CA3AF",   # secondary text
+        "dim":       "#525866",   # tertiary / placeholder
+        "border":    "#262932",   # hairline borders
+        "row_hover": "#1D1F26",   # list row hover overlay
+        "code_bg":   "#16181D",   # inline code / terminal background
+        "sidebar":   "#0B0C10",   # nav strip (subtly darker than bg)
+        "chat_bg":   "#0E0F13",
+        "term_bg":   "#0B0C10",
+        "term_text": "#E6E8EE",
+        "warning":   "#F59E0B",
+        "error":     "#EF4444",
+        "success":   "#10B981",
+        "user_msg":  "#E6E8EE",
+        "ai_msg":    "#E6E8EE",
+        "chat_page":     "#0E0F13",
+        "terminal_page": "#0E0F13",
+        "timeline_page": "#0E0F13",
+        "warnings_page": "#0E0F13",
+        "selfmod_page":  "#0E0F13",
+        "patterns_page": "#0E0F13",
+        "sidebar_chat":     "#0B0C10",
+        "sidebar_terminal": "#0B0C10",
+        "sidebar_timeline": "#0B0C10",
+        "sidebar_warnings": "#0B0C10",
+        "sidebar_selfmod":  "#0B0C10",
+        "sidebar_patterns": "#0B0C10",
+        "glass_chat":     "#16181D",
+        "glass_terminal": "#16181D",
+        "glass_timeline": "#16181D",
+        "glass_warnings": "#16181D",
+        "glass_selfmod":  "#16181D",
+        "glass_patterns": "#16181D",
+        # Per-step kind accents for the agent harness cards.
+        "kind_thought":     "#525866",
+        "kind_plan":        "#8B8CF7",
+        "kind_action":      "#F59E0B",
+        "kind_observation": "#10B981",
     },
     "minimal": {
-        "bg":        "#f9fbfd",
-        "bg2":       "#f0f4f8",
-        "bg3":       "#e6ecf2",
-        "accent":    "#0284c7",     # sky blue
-        "accent2":   "#7c3aed",     # violet
-        "text":      "#0c1a2e",
-        "text2":     "#445566",
-        "dim":       "#94a3b8",
-        "border":    "#dde4ee",
-        "sidebar":   "#eef2f7",
-        "chat_bg":   "#ffffff",
-        "term_bg":   "#0c1a2e",
-        "term_text": "#e2f0ff",
-        "warning":   "#d97706",
-        "error":     "#dc2626",
+        "bg":        "#FFFFFF",
+        "bg2":       "#F4F5F7",
+        "bg3":       "#ECEFF3",
+        "accent":    "#4F46E5",
+        "accent2":   "#3730A3",
+        "accent_text": "#FFFFFF",
+        "text":      "#0F172A",
+        "text2":     "#64748B",
+        "dim":       "#94A3B8",
+        "border":    "#E2E8F0",
+        "row_hover": "#F1F5F9",
+        "code_bg":   "#F1F5F9",
+        "sidebar":   "#F8FAFC",
+        "chat_bg":   "#FFFFFF",
+        "term_bg":   "#0F172A",
+        "term_text": "#E2E8F0",
+        "warning":   "#D97706",
+        "error":     "#DC2626",
         "success":   "#059669",
-        "user_msg":  "#dbeafe",
-        "ai_msg":    "#f8fafc",
-        "chat_page":     "#f7fafd",
-        "terminal_page": "#f5f8fc",
-        "timeline_page": "#f8f7fb",
-        "warnings_page": "#fbf7f8",
-        "selfmod_page":  "#f9f5fb",
-        "patterns_page": "#f6f9fb",
-        "sidebar_chat":     "#eaf0f8",
-        "sidebar_terminal": "#e7eef6",
-        "sidebar_timeline": "#ece8f4",
-        "sidebar_warnings": "#f2e8ec",
-        "sidebar_selfmod":  "#f0e6f6",
-        "sidebar_patterns": "#e8f0f6",
-        "glass_chat":     "#eef4fa",
-        "glass_terminal": "#ebf0f6",
-        "glass_timeline": "#f0ecf6",
-        "glass_warnings": "#f6eef0",
-        "glass_selfmod":  "#f2eaf8",
-        "glass_patterns": "#eaf2f8",
+        "user_msg":  "#0F172A",
+        "ai_msg":    "#0F172A",
+        "chat_page":     "#FFFFFF",
+        "terminal_page": "#FFFFFF",
+        "timeline_page": "#FFFFFF",
+        "warnings_page": "#FFFFFF",
+        "selfmod_page":  "#FFFFFF",
+        "patterns_page": "#FFFFFF",
+        "sidebar_chat":     "#F8FAFC",
+        "sidebar_terminal": "#F8FAFC",
+        "sidebar_timeline": "#F8FAFC",
+        "sidebar_warnings": "#F8FAFC",
+        "sidebar_selfmod":  "#F8FAFC",
+        "sidebar_patterns": "#F8FAFC",
+        "glass_chat":     "#F8FAFC",
+        "glass_terminal": "#F8FAFC",
+        "glass_timeline": "#F8FAFC",
+        "glass_warnings": "#F8FAFC",
+        "glass_selfmod":  "#F8FAFC",
+        "glass_patterns": "#F8FAFC",
+        "kind_thought":     "#94A3B8",
+        "kind_plan":        "#4F46E5",
+        "kind_action":      "#D97706",
+        "kind_observation": "#059669",
     },
     "classic": {
-        "bg":        "#101010",
-        "bg2":       "#181818",
-        "bg3":       "#202020",
-        "accent":    "#b0b0b0",     # silver
-        "accent2":   "#707070",
-        "text":      "#e4e4e4",
+        "bg":        "#111111",
+        "bg2":       "#1A1A1A",
+        "bg3":       "#232323",
+        "accent":    "#C0C0C0",
+        "accent2":   "#909090",
+        "accent_text": "#111111",
+        "text":      "#E4E4E4",
         "text2":     "#909090",
-        "dim":       "#404040",
-        "border":    "#282828",
-        "sidebar":   "#0c0c0c",
-        "chat_bg":   "#141414",
+        "dim":       "#525252",
+        "border":    "#2A2A2A",
+        "row_hover": "#232323",
+        "code_bg":   "#1A1A1A",
+        "sidebar":   "#0A0A0A",
+        "chat_bg":   "#111111",
         "term_bg":   "#080808",
-        "term_text": "#00ff41",
-        "warning":   "#c8a000",
-        "error":     "#c84040",
-        "success":   "#40c840",
-        "user_msg":  "#1c1c1c",
-        "ai_msg":    "#121212",
-        "chat_page":     "#111311",
-        "terminal_page": "#0e100e",
-        "timeline_page": "#121012",
-        "warnings_page": "#131010",
-        "selfmod_page":  "#101014",
-        "patterns_page": "#0e1210",
-        "sidebar_chat":     "#0e0e0e",
-        "sidebar_terminal": "#0c0e0c",
-        "sidebar_timeline": "#100e10",
-        "sidebar_warnings": "#110e0e",
-        "sidebar_selfmod":  "#0e0e12",
-        "sidebar_patterns": "#0c100e",
-        "glass_chat":     "#161616",
-        "glass_terminal": "#141614",
-        "glass_timeline": "#181418",
-        "glass_warnings": "#191414",
-        "glass_selfmod":  "#14141a",
-        "glass_patterns": "#121614",
+        "term_text": "#E4E4E4",
+        "warning":   "#C8A000",
+        "error":     "#C84040",
+        "success":   "#40C840",
+        "user_msg":  "#E4E4E4",
+        "ai_msg":    "#E4E4E4",
+        "chat_page":     "#111111",
+        "terminal_page": "#111111",
+        "timeline_page": "#111111",
+        "warnings_page": "#111111",
+        "selfmod_page":  "#111111",
+        "patterns_page": "#111111",
+        "sidebar_chat":     "#0A0A0A",
+        "sidebar_terminal": "#0A0A0A",
+        "sidebar_timeline": "#0A0A0A",
+        "sidebar_warnings": "#0A0A0A",
+        "sidebar_selfmod":  "#0A0A0A",
+        "sidebar_patterns": "#0A0A0A",
+        "glass_chat":     "#1A1A1A",
+        "glass_terminal": "#1A1A1A",
+        "glass_timeline": "#1A1A1A",
+        "glass_warnings": "#1A1A1A",
+        "glass_selfmod":  "#1A1A1A",
+        "glass_patterns": "#1A1A1A",
+        "kind_thought":     "#525252",
+        "kind_plan":        "#C0C0C0",
+        "kind_action":      "#C8A000",
+        "kind_observation": "#40C840",
     },
 }
 
 DEFAULT_THEME = "cyber"
+
+# ── Config file override ────────────────────────────────────────
+# Load config.json next to this file to override defaults at runtime.
+# This allows editing settings without modifying Python code.
+import json, os  # noqa: E402  (local import OK — needed after module-level defaults)
+
+_config_path = os.path.join(os.path.dirname(__file__), "config.json")
+if os.path.isfile(_config_path):
+    try:
+        with open(_config_path, encoding="utf-8") as _f:
+            _cfg = json.load(_f)
+        _OVERRIDABLE = {
+            "LM_STUDIO_BASE_URL": "lm_studio_base_url",
+            "CHAT_MODEL": "chat_model",
+            "MONGO_URI": "mongo_uri",
+            "MONGO_DB": "mongo_db",
+            "LLM_TIMEOUT": "llm_timeout",
+            "LLM_CHAT_TEMPERATURE": "llm_chat_temperature",
+            "LLM_CLASS_TEMPERATURE": "llm_class_temperature",
+            "DEFAULT_THEME": "default_theme",
+        }
+        for _var, _key in _OVERRIDABLE.items():
+            if _key in _cfg:
+                globals()[_var] = _cfg[_key]
+
+        # Agent harness overrides — int/str keys, applied after the core set.
+        _AGENT_OVERRIDABLE = {
+            "AGENT_MAX_STEPS": ("agent_max_steps", int),
+            "AGENT_MAX_TOKENS_PER_TASK": ("agent_max_tokens_per_task", int),
+            "AGENT_MODEL": ("agent_model", str),
+            "AGENT_DEFAULT_MODE": ("agent_default_mode", str),
+            "AGENT_WORKSPACE_ROOT": ("agent_workspace_root", str),
+            "AGENT_APPROVAL_TIMEOUT": ("agent_approval_timeout", int),
+            "AGENT_CHAT_MAX_STEPS": ("agent_chat_max_steps", int),
+        }
+        for _var, (_key, _caster) in _AGENT_OVERRIDABLE.items():
+            if _key in _cfg and _cfg[_key] not in (None, ""):
+                try:
+                    globals()[_var] = _caster(_cfg[_key])
+                except (TypeError, ValueError):
+                    pass  # ignore malformed value — keep the default
+    except (json.JSONDecodeError, OSError):
+        pass  # Silently ignore malformed config — use defaults
 
 # System Prompt
 SYSTEM_PROMPT = """You are ARIA — Advanced Runtime Intelligence Assistant. You are a local, private, fast AI assistant running entirely on the user's Windows machine.
@@ -167,6 +250,60 @@ RESPONSE FORMAT:
 - Bold key terms on first mention
 - No preamble like "Sure!" or "Here's the answer:" — just answer directly"""
 
+# Agent Harness System Prompt (Phase 1).
+# Drives the multi-round plan→act→observe loop. Mirrors ARIA's local-first,
+# safety-first voice while adding the tool-call / planning protocol the
+# single-turn SYSTEM_PROMPT lacks.
+AGENT_SYSTEM_PROMPT = """You are ARIA in AGENT MODE — an autonomous coding agent running locally on the user's Windows machine. You work through a plan→act→observe loop to accomplish multi-step software tasks.
+
+OPERATING LOOP:
+1. THINK briefly about the current state and what to do next.
+2. ACT by calling exactly one tool (read_file, search_files, list_files, edit_file, write_file, etc.). Tool calls are your only way to affect the world.
+3. OBSERVE the tool result that is returned to you, then repeat.
+4. When the task is complete and verified, respond with your final answer as plain text WITH NO tool call. The loop ends when you produce a tool-free message.
+
+TOOL DISCIPLINE:
+- Call ONE tool per step. Wait for its result before deciding the next action.
+- Prefer read-only tools (read_file, search_files, list_files) to investigate before mutating anything.
+- When you edit or write files, make targeted, minimal changes — never rewrite a whole file when an edit will do.
+- After making changes, re-read the affected file to confirm the change landed correctly.
+- If a tool returns an error, treat it as an observation: diagnose it, adjust, and retry differently rather than repeating the identical call.
+
+SAFETY & SCOPE:
+- You are scoped to the task's workspace root. Do not touch files outside it.
+- Never attempt destructive shell actions, format/disk operations, or anything that modifies the system. If a task seems to require one, STOP and explain what you would do and why, then wait for the user.
+- If you are unsure whether an action is safe, state it plainly and stop for approval rather than guessing.
+- All data stays on this machine. Never suggest cloud services, external APIs, or web-based tools unless explicitly asked.
+
+PLANNING (when a plan is requested first):
+- Produce a concise, numbered plan of concrete actions before executing.
+- Each step should map to a tool you will call. Note where you are uncertain.
+- Do not begin acting until the plan is approved. If rejected, revise.
+
+TERMINATION:
+- Stop as soon as the goal is met and verified — do not pad with extra steps.
+- If you cannot complete the task (missing tool, blocked, ambiguous), stop and report exactly what blocked you and what you tried.
+- Keep final summaries tight: what changed, where, and how to verify it."""
+
+# Planning prompt (Phase 1). In plan_apply mode the runner asks the model to
+# produce a plan BEFORE acting; the user approves it, then the act→observe
+# loop begins. Output is plain text (rendered verbatim in the Plan tab).
+AGENT_PLAN_PROMPT = """Before acting, produce a concise plan for this task.
+
+Format:
+1. GOAL: <one-line restatement of what success looks like>
+2. STEPS:
+   1. <concrete action, naming the tool you'll use>
+   2. <...>
+3. RISKS / UNCERTAINTIES: <what might go wrong or needs human judgement>
+4. VERIFY: <how you'll confirm the task is actually done>
+
+Rules:
+- Each step must map to a real tool (read_file, search_files, list_files, edit_file, write_file, get_system_info).
+- Prefer read-only investigation steps first; put mutations later.
+- If a step would modify or delete files, flag it explicitly so the user knows what they're approving.
+- Do NOT execute anything in this response — planning only. Keep it under ~200 words."""
+
 # Intent Classifier Prompt
 INTENT_CLASSIFIER_PROMPT = """Classify the user message into exactly one intent mode.
 
@@ -190,6 +327,7 @@ MODES (choose the single best match):
 - rerun         : Re-execute a previous command by number
 - image_gen     : Generate or create an image ("draw a cat", "generate a landscape")
 - fabric        : Run a Fabric AI pattern — triggered by keywords like: summarize, extract, analyze, improve, outline, claims, quiz, tags, rate, explain code, meeting notes, paper, threat, tldr, micro summary, essay, rewrite, chapters, mermaid, markmap
+- agent         : Multi-step coding or software engineering task ("implement X", "refactor Y", "build a feature", "fix the bug in Z", "add a test for W", "/agent <goal>")
 
 DECISION RULES:
 - If the user says "open" + app name → command
@@ -199,6 +337,7 @@ DECISION RULES:
 - If the user asks about system resources (CPU, RAM, disk, services) → powershell
 - If the user mentions a specific site to search → smart_search
 - If the user mentions fabric patterns (summarize, extract, analyze, etc.) → fabric
+- If the user wants a multi-step code change, implementation, refactoring, or test addition → agent
 - If unsure between chat and explain → prefer explain for technical topics, chat otherwise
 - Confidence should be low (<0.5) if the message is very short or ambiguous
 
@@ -327,7 +466,8 @@ SITE_ALIASES = {
 
 # NL → PowerShell translation table
 POWERSHELL_PATTERNS = {
-    r"(ram|memory) usage":         "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, @{N='RAM_MB';E={[math]::Round($_.WorkingSet64/1MB,1)}}",
+    r"(ram|memory)\s+usage":      "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, @{N='RAM_MB';E={[math]::Round($_.WorkingSet64/1MB,1)}}",
+    r"(how\s+(much|many)\s+).*(ram|memory)": "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, @{N='RAM_MB';E={[math]::Round($_.WorkingSet64/1MB,1)}}",
     r"cpu usage":                  "Get-CimInstance Win32_Processor | Select-Object Name, LoadPercentage",
     r"cpu temperature":            "Get-WmiObject MSAcpi_ThermalZoneTemperature -Namespace root/wmi | Select-Object @{N='Temp_C';E={[math]::Round(($_.CurrentTemperature - 2732) / 10, 1)}}",
     r"disk (space|usage)":         "Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{N='Used_GB';E={[math]::Round($_.Used/1GB,2)}}, @{N='Free_GB';E={[math]::Round($_.Free/1GB,2)}}",
@@ -339,8 +479,11 @@ POWERSHELL_PATTERNS = {
     r"wifi passwords?":            "netsh wlan show profiles | Select-String 'All User Profile' | ForEach-Object { $p = ($_ -split ':')[1].Trim(); netsh wlan show profile name=$p key=clear | Select-String 'Key Content' }",
     r"wifi networks?":             "netsh wlan show profiles | Select-String 'All User Profile'",
     r"dns (flush|cache)":          "Clear-DnsClientCache; Write-Host 'DNS cache flushed'",
+    r"flush\s+dns":                "Clear-DnsClientCache; Write-Host 'DNS cache flushed'",
     r"installed (apps|software)":  "Get-WmiObject Win32_Product | Select-Object Name, Version | Sort-Object Name",
     r"(ip|network) (info|address)":"ipconfig /all",
+    r"\b(my\s+)?ip\b":            "ipconfig /all",
+    r"\bwhat('s| is)\s+my\s+ip\b":"ipconfig /all",
     r"(system|pc) info":           "systeminfo | Select-String 'OS|Memory|Processor|System'",
     r"environment variables":      "Get-ChildItem Env: | Sort-Object Name",
     r"top processes":              "Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, Id",
@@ -362,6 +505,7 @@ POWERSHELL_PATTERNS = {
     r"resource monitor":           "Start-Process resmon",
     r"event viewer":               "Start-Process eventvwr",
     r"services manager":           "Start-Process services.msc",
+    r"open\s+services":            "Start-Process services.msc",
 }
 
 # Blocked Command Patterns
@@ -538,6 +682,12 @@ SELFMOD_LOCKED_PARAMS = {
     "executor_security",
     "mongo_uri",
     "lm_studio_base_url",
+    # Agent harness (Phase 6) — agent safety knobs the self-mod system must
+    # never be able to relax. (Currently exposed as code defaults only; not
+    # yet user-tunable, but locked so future selfmod can't add them.)
+    "agent_workspace_root",
+    "agent_command_allowlist",
+    "agent_model",
 }
 
 # Health Monitor

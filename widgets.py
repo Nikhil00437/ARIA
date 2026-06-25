@@ -2,99 +2,79 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QFrame, QSizePolicy
+    QLabel, QFrame,
 )
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, pyqtSignal
-from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QPainterPath, QFont
+from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, pyqtSignal
 
 
 class Toast(QFrame):
-    """Non-intrusive toast notification widget with auto-dismiss."""
-    
+    """Non-intrusive toast notification widget with auto-dismiss.
+
+    Theming is driven by the global stylesheet (see ``styles.py``): the
+    frame uses ``#Toast`` (left border color varies via the ``toastKind``
+    dynamic property) and the inner labels/button use the matching object
+    names. Inline QSS is only used for per-instance icon glyph sizing.
+    """
+
     TOAST_TYPES = {
-        "info": ("rgba(80,180,255,0.9)", "rgba(80,180,255,0.15)", "ℹ"),
-        "success": ("rgba(80,200,120,0.9)", "rgba(80,200,120,0.15)", "✓"),
-        "warning": ("rgba(255,180,40,0.9)", "rgba(255,180,40,0.15)", "⚠"),
-        "error": ("rgba(255,80,80,0.9)", "rgba(255,80,80,0.15)", "✕"),
+        "info":    ("\u2139",  "info"),
+        "success": ("\u2713", "success"),
+        "warning": ("\u26a0", "warning"),
+        "error":   ("\u2715", "error"),
     }
-    
+
     def __init__(self, message: str, toast_type: str = "info", duration: int = 3000, parent=None):
         super().__init__(parent)
         self._message = message
         self._toast_type = toast_type
-        self._duration = duration
-        
-        # Get colors for this type
-        color, bg, icon = self.TOAST_TYPES.get(toast_type, self.TOAST_TYPES["info"])
-        
-        self.setFixedHeight(44)
+
+        icon, kind = self.TOAST_TYPES.get(toast_type, self.TOAST_TYPES["info"])
+
+        self.setFixedHeight(40)
         self.setMinimumWidth(280)
-        self.setMaximumWidth(400)
+        self.setMaximumWidth(420)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        
-        # Glassy style
-        self.setStyleSheet(f"""
-            Toast {{
-                background: {bg};
-                border: 1px solid {color};
-                border-radius: 10px;
-            }}
-        """)
-        
-        # Layout
+
+        # Theme via global stylesheet (left-border color varies with kind).
+        self.setObjectName("Toast")
+        self.setProperty("toastKind", kind)
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(10)
-        
-        # Icon
+
         self._icon = QLabel(icon)
-        self._icon.setStyleSheet(f"color: {color}; font-size: 14pt; background: transparent;")
-        self._icon.setFixedWidth(20)
+        self._icon.setFixedWidth(18)
         layout.addWidget(self._icon)
-        
-        # Message
+
         self._label = QLabel(message)
-        self._label.setStyleSheet(f"color: white; font-size: 9pt; background: transparent;")
+        self._label.setObjectName("ToastLabel")
         self._label.setWordWrap(True)
         layout.addWidget(self._label, 1)
-        
-        # Close button
-        self._close_btn = QPushButton("×")
-        self._close_btn.setFixedSize(20, 20)
-        self._close_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: none;
-                color: rgba(255,255,255,0.5);
-                font-size: 14pt;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                color: white;
-            }
-        """)
+
+        self._close_btn = QPushButton("\u00d7")
+        self._close_btn.setObjectName("ToastClose")
+        self._close_btn.setFixedSize(22, 22)
         self._close_btn.clicked.connect(self.close)
         layout.addWidget(self._close_btn)
-        
-        # Animation setup
+
         self._opacity = 0.0
         self._animation = QPropertyAnimation(self, b"windowOpacity")
         self._animation.setDuration(300)
-        
-        # Auto-dismiss timer
+
         if duration > 0:
             QTimer.singleShot(duration, self._animate_out)
-    
+
     def showEvent(self, event):
         super().showEvent(event)
         self._animate_in()
-    
+
     def _animate_in(self):
         self.setWindowOpacity(0.0)
         self._animation.setStartValue(0.0)
         self._animation.setEndValue(1.0)
         self._animation.start()
-    
+
     def _animate_out(self):
         self._animation.setStartValue(1.0)
         self._animation.setEndValue(0.0)
@@ -283,55 +263,44 @@ class TypingIndicator(QLabel):
 
 
 class ConfidenceBadge(QLabel):
+    """Small pill badge showing a confidence percentage.
+
+    Theming via global stylesheet. Per-instance variant is selected by
+    setting the object name to one of ``ConfidenceBadgeHigh`` / ``ConfidenceBadgeMid``
+    / ``ConfidenceBadgeLow`` so QSS picks up the correct color tier.
+    """
+
     def __init__(self, confidence: float, parent=None):
         pct = int(confidence * 100)
         super().__init__(f"{pct}%", parent)
 
         if pct >= 85:
-            color, bg = "rgba(80,180,255,0.9)", "rgba(80,180,255,0.10)"
-            border = "rgba(80,180,255,0.35)"
-        elif pct >= 65:
-            color, bg = "rgba(255,180,40,0.9)", "rgba(255,180,40,0.10)"
-            border = "rgba(255,180,40,0.35)"
+            name = "ConfidenceBadgeHigh"
+        elif pct >= 60:
+            name = "ConfidenceBadgeMid"
         else:
-            color, bg = "rgba(255,80,80,0.9)", "rgba(255,80,80,0.10)"
-            border = "rgba(255,80,80,0.35)"
+            name = "ConfidenceBadgeLow"
 
-        self.setStyleSheet(
-            f"background: {bg}; color: {color};"
-            f"border: 1px solid {border};"
-            "border-radius: 10px;"
-            "padding: 2px 8px;"
-            "font-size: 8pt;"
-            "font-weight: 700;"
-            "font-family: 'Cascadia Code', 'Consolas', monospace;"
-        )
+        self.setObjectName(name)
 
 
 class Separator(QFrame):
+    """Thin 1px hairline separator. Themed via global stylesheet."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.HLine)
         self.setFrameShadow(QFrame.Plain)
-        self.setStyleSheet(
-            "background: transparent; border: none; "
-            "border-top: 1px solid rgba(255,255,255,0.10);"
-        )
+        self.setObjectName("Separator")
         self.setFixedHeight(1)
 
 
 class GlassCard(QFrame):
-    """Reusable frosted glass card widget."""
+    """Generic flat card widget. Themed via the ``#Card`` selector."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet(
-            "GlassCard {"
-            "  background: rgba(255,255,255,0.10);"
-            "  border: 1px solid rgba(255,255,255,0.18);"
-            "  border-radius: 16px;"
-            "}"
-        )
+        self.setObjectName("Card")
 
 
 class CommandPalette(QFrame):
@@ -373,65 +342,26 @@ class CommandPalette(QFrame):
     
     def _build_ui(self):
         from PyQt5.QtWidgets import QLineEdit, QListWidget, QListWidgetItem
-        
-        self.setStyleSheet("""
-            CommandPalette {
-                background: rgba(20, 25, 45, 0.98);
-                border: 1px solid rgba(80, 180, 255, 0.4);
-                border-radius: 12px;
-            }
-        """)
-        
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
-        # Search input
+
+        # Search input (themed via #CommandPaletteInput)
         self._search = QLineEdit()
+        self._search.setObjectName("CommandPaletteInput")
         self._search.setPlaceholderText("Type a command...")
-        self._search.setStyleSheet("""
-            QLineEdit {
-                background: transparent;
-                border: none;
-                border-bottom: 1px solid rgba(255,255,255,0.15);
-                padding: 16px 20px;
-                color: white;
-                font-size: 14pt;
-                font-family: 'Segoe UI', sans-serif;
-            }
-            QLineEdit::placeholder {
-                color: rgba(255,255,255,0.4);
-            }
-        """)
         self._search.textChanged.connect(self._on_search_changed)
         self._search.installEventFilter(self)
         layout.addWidget(self._search)
-        
-        # Command list
+
+        # Command list (themed via #CommandPaletteList)
         self._list = QListWidget()
-        self._list.setStyleSheet("""
-            QListWidget {
-                background: transparent;
-                border: none;
-                padding: 8px;
-            }
-            QListWidget::item {
-                color: rgba(255,255,255,0.85);
-                padding: 10px 16px;
-                border-radius: 6px;
-            }
-            QListWidget::item:selected {
-                background: rgba(80, 180, 255, 0.25);
-                color: white;
-            }
-            QListWidget::item:hover {
-                background: rgba(255,255,255,0.08);
-            }
-        """)
+        self._list.setObjectName("CommandPaletteList")
         self._list.itemClicked.connect(self._on_item_clicked)
         self._list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         layout.addWidget(self._list)
-        
+
         # Populate list
         self._update_list()
     
@@ -518,103 +448,54 @@ class CommandPalette(QFrame):
 class ConfirmDialog(QFrame):
     """Confirmation dialog for destructive actions."""
     
-    # Signal emitted with True for confirmed, False for cancelled
-    confirmed = None  # Will be defined in __init__
+    # Signal must be a class attribute in PyQt5 for connect() to work
+    confirmed = pyqtSignal(bool)
     
-    def __init__(self, title: str, message: str, confirm_text: str = "Confirm", cancel_text: str = "Cancel", 
+    def __init__(self, title: str, message: str, confirm_text: str = "Confirm", cancel_text: str = "Cancel",
                  confirm_style: str = "danger", parent=None):
         super().__init__(parent)
-        from PyQt5.QtCore import pyqtSignal
-        self.confirmed = pyqtSignal(bool)
-        
+
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Popup)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setFixedSize(400, 180)
         self.setObjectName("ConfirmDialog")
-        
-        # Style based on type
+
+        # Style drives only the confirm-button variant via object name.
         if confirm_style == "danger":
-            confirm_color = "rgba(255,80,80,0.9)"
-            confirm_bg = "rgba(255,80,80,0.15)"
+            primary_name = "RejectBtn"  # red
         elif confirm_style == "warning":
-            confirm_color = "rgba(255,180,40,0.9)"
-            confirm_bg = "rgba(255,180,40,0.15)"
+            primary_name = "PatternRunBtn"  # accent but visually distinct
         else:
-            confirm_color = "rgba(80,180,255,0.9)"
-            confirm_bg = "rgba(80,180,255,0.15)"
-        
-        self.setStyleSheet(f"""
-            ConfirmDialog {{
-                background: rgba(20, 25, 45, 0.98);
-                border: 1px solid rgba(255,255,255,0.2);
-                border-radius: 12px;
-            }}
-        """)
-        
+            primary_name = "DialogBtnPrimary"
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
-        
-        # Title
+
         title_label = QLabel(title)
-        title_label.setStyleSheet("""
-            color: white;
-            font-size: 14pt;
-            font-weight: 600;
-            background: transparent;
-        """)
+        title_label.setObjectName("DialogTitle")
         layout.addWidget(title_label)
-        
-        # Message
+
         msg_label = QLabel(message)
-        msg_label.setStyleSheet("""
-            color: rgba(255,255,255,0.7);
-            font-size: 10pt;
-            background: transparent;
-        """)
+        msg_label.setObjectName("DialogMessage")
         msg_label.setWordWrap(True)
         layout.addWidget(msg_label)
-        
+
         layout.addStretch()
-        
-        # Buttons
+
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(12)
-        
+        btn_layout.setSpacing(8)
+
         cancel_btn = QPushButton(cancel_text)
-        cancel_btn.setFixedSize(120, 36)
-        cancel_btn.setStyleSheet("""
-            QPushButton {{
-                background: rgba(255,255,255,0.1);
-                border: 1px solid rgba(255,255,255,0.2);
-                border-radius: 8px;
-                color: rgba(255,255,255,0.8);
-                font-size: 10pt;
-            }}
-            QPushButton:hover {{
-                background: rgba(255,255,255,0.15);
-            }}
-        """)
+        cancel_btn.setObjectName("DialogBtn")
+        cancel_btn.setFixedSize(110, 34)
         cancel_btn.clicked.connect(lambda: self._respond(False))
-        
+
         confirm_btn = QPushButton(confirm_text)
-        confirm_btn.setFixedSize(120, 36)
-        confirm_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {confirm_bg};
-                border: 1px solid {confirm_color};
-                border-radius: 8px;
-                color: {confirm_color};
-                font-size: 10pt;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: {confirm_color};
-                color: white;
-            }}
-        """)
+        confirm_btn.setObjectName(primary_name)
+        confirm_btn.setFixedSize(110, 34)
         confirm_btn.clicked.connect(lambda: self._respond(True))
-        
+
         btn_layout.addStretch()
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(confirm_btn)
@@ -631,253 +512,10 @@ class ConfirmDialog(QFrame):
         self.setFocus()
 
 
-class TabBar(QWidget):
-    """Horizontal tab bar for conversation tabs."""
-    
-    tab_selected = None  # Will be defined in __init__
-    tab_closed = None
-    new_tab_requested = None
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        from PyQt5.QtCore import pyqtSignal
-        self.tab_selected = pyqtSignal(str)  # tab_id
-        self.tab_closed = pyqtSignal(str)    # tab_id
-        self.new_tab_requested = pyqtSignal()
-        
-        self.setFixedHeight(40)
-        self.setObjectName("TabBar")
-        
-        self._tabs: List[Dict] = []  # {id, title, is_active}
-        self._active_tab_id: Optional[str] = None
-        
-        self._build_ui()
-    
-    def _build_ui(self):
-        from PyQt5.QtWidgets import QScrollArea, QListWidget, QListWidgetItem
-        
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(4)
-        
-        # Tab list (horizontal)
-        self._tab_list = QListWidget()
-        self._tab_list.setOrientation(Qt.Horizontal)
-        self._tab_list.setFlow(QListWidget.LeftToRight)
-        self._tab_list.setSpacing(2)
-        self._tab_list.setStyleSheet("""
-            QListWidget {
-                background: transparent;
-                border: none;
-            }
-            QListWidget::item {
-                background: rgba(255,255,255,0.08);
-                border: 1px solid rgba(255,255,255,0.1);
-                border-radius: 6px;
-                padding: 6px 12px;
-                margin: 2px;
-            }
-            QListWidget::item:selected {
-                background: rgba(80,180,255,0.25);
-                border: 1px solid rgba(80,180,255,0.5);
-            }
-            QListWidget::item:hover:!selected {
-                background: rgba(255,255,255,0.12);
-            }
-        """)
-        self._tab_list.currentRowChanged.connect(self._on_tab_changed)
-        self._tab_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        layout.addWidget(self._tab_list, 1)
-        
-        # New tab button
-        self._new_btn = QPushButton("+")
-        self._new_btn.setFixedSize(28, 28)
-        self._new_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(80,180,255,0.15);
-                border: 1px solid rgba(80,180,255,0.3);
-                border-radius: 6px;
-                color: rgba(80,180,255,0.9);
-                font-size: 16pt;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: rgba(80,180,255,0.3);
-            }
-        """)
-        self._new_btn.clicked.connect(self.new_tab_requested.emit)
-        layout.addWidget(self._new_btn)
-    
-    def add_tab(self, tab_id: str, title: str, is_active: bool = False):
-        """Add a new tab."""
-        self._tabs.append({"id": tab_id, "title": title, "is_active": is_active})
-        self._update_tabs()
-        
-        if is_active:
-            self._active_tab_id = tab_id
-            # Find and select the tab
-            for i, tab in enumerate(self._tabs):
-                if tab["id"] == tab_id:
-                    self._tab_list.setCurrentRow(i)
-                    break
-    
-    def remove_tab(self, tab_id: str):
-        """Remove a tab."""
-        self._tabs = [t for t in self._tabs if t["id"] != tab_id]
-        self._update_tabs()
-        
-        if self._active_tab_id == tab_id:
-            self._active_tab_id = self._tabs[0]["id"] if self._tabs else None
-    
-    def update_tab_title(self, tab_id: str, title: str):
-        """Update a tab's title."""
-        for tab in self._tabs:
-            if tab["id"] == tab_id:
-                tab["title"] = title
-                break
-        self._update_tabs()
-    
-    def set_active_tab(self, tab_id: str):
-        """Set the active tab."""
-        self._active_tab_id = tab_id
-        for i, tab in enumerate(self._tabs):
-            if tab["id"] == tab_id:
-                self._tab_list.setCurrentRow(i)
-                break
-    
-    def _update_tabs(self):
-        """Update the tab list display."""
-        self._tab_list.clear()
-        
-        for tab in self._tabs:
-            item = QListWidgetItem(tab["title"])
-            item.setData(Qt.UserRole, tab["id"])
-            
-            # Add close button indicator
-            if tab["id"] == self._active_tab_id:
-                item.setText(f"● {tab['title']}")
-            else:
-                item.setText(tab["title"])
-            
-            self._tab_list.addItem(item)
-    
-    def _on_tab_changed(self, index: int):
-        if 0 <= index < len(self._tabs):
-            tab = self._tabs[index]
-            self._active_tab_id = tab["id"]
-            self.tab_selected.emit(tab["id"])
 
 
-class SearchBar(QWidget):
-    """Search bar for finding messages in conversation."""
-    
-    search_triggered = None  # Will be defined in __init__
-    search_closed = None
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        from PyQt5.QtCore import pyqtSignal
-        self.search_triggered = pyqtSignal(str)  # search query
-        self.search_closed = pyqtSignal()
-        
-        self.setFixedHeight(44)
-        self.setObjectName("SearchBar")
-        self.hide()  # Hidden by default
-        
-        self._build_ui()
-    
-    def _build_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(8)
-        
-        # Search icon
-        search_icon = QLabel("🔍")
-        search_icon.setStyleSheet("background: transparent; font-size: 12pt;")
-        layout.addWidget(search_icon)
-        
-        # Search input
-        self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("Search messages...")
-        self._search_input.setStyleSheet("""
-            QLineEdit {
-                background: rgba(255,255,255,0.08);
-                border: 1px solid rgba(255,255,255,0.15);
-                border-radius: 6px;
-                padding: 8px 12px;
-                color: white;
-                font-size: 10pt;
-            }
-            QLineEdit::placeholder {
-                color: rgba(255,255,255,0.4);
-            }
-            QLineEdit:focus {
-                border: 1px solid rgba(80,180,255,0.5);
-            }
-        """)
-        self._search_input.textChanged.connect(self._on_search_changed)
-        self._search_input.returnPressed.connect(self._on_search_submit)
-        layout.addWidget(self._search_input, 1)
-        
-        # Result count
-        self._result_label = QLabel("")
-        self._result_label.setStyleSheet("color: rgba(255,255,255,0.5); font-size: 9pt; background: transparent;")
-        layout.addWidget(self._result_label)
-        
-        # Close button
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(24, 24)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: none;
-                color: rgba(255,255,255,0.5);
-                font-size: 14pt;
-            }
-            QPushButton:hover {
-                color: white;
-            }
-        """)
-        close_btn.clicked.connect(self.hide)
-        close_btn.clicked.connect(self.search_closed.emit)
-        layout.addWidget(close_btn)
-    
-    def show(self):
-        super().show()
-        self._search_input.setFocus()
-    
-    def _on_search_changed(self, text: str):
-        if text:
-            self.search_triggered.emit(text)
-        else:
-            self._result_label.setText("")
-    
-    def _on_search_submit(self):
-        self.search_triggered.emit(self._search_input.text())
-    
-    def set_result_count(self, count: int, current: int = 0):
-        """Set the search result count display."""
-        if count > 0:
-            self._result_label.setText(f"{current}/{count}")
-        else:
-            self._result_label.setText("No results")
 
 
-class LoadingSkeleton(QFrame):
-    """Animated loading skeleton for better perceived performance."""
-    
-    def __init__(self, height: int = 20, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(height)
-        self.setObjectName("LoadingSkeleton")
-        
-        self.setStyleSheet("""
-            LoadingSkeleton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(255,255,255,0.02), stop:0.5 rgba(255,255,255,0.08), stop:1 rgba(255,255,255,0.02));
-                border-radius: 4px;
-            }
-        """)
 
 
 class KeyboardShortcutsHelp(QFrame):
@@ -893,29 +531,14 @@ class KeyboardShortcutsHelp(QFrame):
         self._build_ui()
     
     def _build_ui(self):
-        self.setStyleSheet("""
-            KeyboardShortcutsHelp {
-                background: rgba(20, 25, 45, 0.98);
-                border: 1px solid rgba(80, 180, 255, 0.4);
-                border-radius: 12px;
-            }
-        """)
-        
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 20)
-        layout.setSpacing(12)
-        
-        # Title
-        title = QLabel("⌨️ Keyboard Shortcuts")
-        title.setStyleSheet("""
-            color: white;
-            font-size: 14pt;
-            font-weight: 600;
-            background: transparent;
-        """)
+        layout.setSpacing(10)
+
+        title = QLabel("Keyboard Shortcuts")
+        title.setObjectName("DialogTitle")
         layout.addWidget(title)
-        
-        # Shortcuts
+
         shortcuts = [
             ("General", [
                 ("Ctrl+K", "Open command palette"),
@@ -926,63 +549,47 @@ class KeyboardShortcutsHelp(QFrame):
             ("Navigation", [
                 ("Alt+1", "Go to Chat"),
                 ("Alt+2", "Go to Terminal"),
-                ("Alt+3", "Go to Patterns"),
-                ("Alt+4", "Go to Warnings"),
-                ("Alt+5", "Go to Self-Mod"),
+                ("Alt+3", "Go to Agent"),
+                ("Alt+4", "Go to Patterns"),
+                ("Alt+5", "Go to Warnings"),
+                ("Alt+6", "Go to Self-Mod"),
             ]),
             ("Chat", [
                 ("Enter", "Send message"),
                 ("Shift+Enter", "New line"),
             ]),
         ]
-        
+
         for category, items in shortcuts:
-            # Category header
             cat_label = QLabel(category)
-            cat_label.setStyleSheet("""
-                color: rgba(120, 180, 255, 0.9);
-                font-size: 9pt;
-                font-weight: 600;
-                background: transparent;
-                padding-top: 8px;
-            """)
+            cat_label.setObjectName("SectionHeader")
             layout.addWidget(cat_label)
-            
-            # Shortcut items
+
             for shortcut, description in items:
                 row = QHBoxLayout()
-                row.setSpacing(8)
-                
+                row.setSpacing(10)
+
                 key_label = QLabel(shortcut)
-                key_label.setStyleSheet("""
-                    color: rgba(255, 255, 255, 0.9);
-                    font-size: 8.5pt;
-                    font-family: 'Cascadia Code', 'Consolas', monospace;
-                    background: rgba(255, 255, 255, 0.1);
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    border-radius: 4px;
-                    padding: 2px 8px;
-                """)
-                
+                key_label.setObjectName("SidebarStatLabel")
+                key_label.setStyleSheet(
+                    "background: #1D1F26; padding: 2px 6px; border-radius: 3px;"
+                )
+                # The global #SidebarStatLabel selector provides the
+                # monospace font + size; the per-instance inline QSS adds the
+                # chip background and compact padding.
+                key_label.setAlignment(Qt.AlignCenter)
+                key_label.setMinimumWidth(80)
+
                 desc_label = QLabel(description)
-                desc_label.setStyleSheet("""
-                    color: rgba(255, 255, 255, 0.6);
-                    font-size: 8.5pt;
-                    background: transparent;
-                """)
-                
+                desc_label.setStyleSheet("color: #9CA3AF; font-size: 9pt; background: transparent;")
+
                 row.addWidget(key_label)
                 row.addWidget(desc_label, 1)
+                row.addStretch()
                 layout.addLayout(row)
-        
-        # Close hint
+
         close_hint = QLabel("Press Escape to close")
-        close_hint.setStyleSheet("""
-            color: rgba(255, 255, 255, 0.35);
-            font-size: 8pt;
-            background: transparent;
-            padding-top: 12px;
-        """)
+        close_hint.setStyleSheet("color: #525866; font-size: 8pt; background: transparent; padding-top: 12px;")
         close_hint.setAlignment(Qt.AlignCenter)
         layout.addWidget(close_hint)
     
@@ -993,85 +600,4 @@ class KeyboardShortcutsHelp(QFrame):
         self.setFocus()
 
 
-class AnimatedIcon(QWidget):
-    """Animated icon with pulse/glow effects."""
-    
-    def __init__(self, icon: str = "●", parent=None):
-        super().__init__(parent)
-        self._icon = icon
-        self.setFixedSize(24, 24)
-        
-        self._animation = QPropertyAnimation(self, b"windowOpacity")
-        self._animation.setDuration(1500)
-        self._animation.setStartValue(0.5)
-        self._animation.setEndValue(1.0)
-        self._animation.setEasingCurve(QEasingCurve.InOutSine)
-        self._animation.setLoopCount(-1)
-    
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._animation.start()
-    
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        
-        # Draw icon with current opacity
-        opacity = self.windowOpacity()
-        color = QColor(80, 180, 255, int(255 * opacity))
-        painter.setPen(color)
-        painter.setFont(QFont("Segoe UI", 14))
-        painter.drawText(self.rect(), Qt.AlignCenter, self._icon)
 
-
-class ErrorBanner(QFrame):
-    """Error banner with dismiss button."""
-    
-    def __init__(self, message: str, parent=None):
-        super().__init__(parent)
-        self.setObjectName("ErrorBanner")
-        self.setFixedHeight(50)
-        
-        self.setStyleSheet("""
-            ErrorBanner {
-                background: rgba(255, 60, 60, 0.15);
-                border: 1px solid rgba(255, 60, 60, 0.4);
-                border-radius: 8px;
-            }
-        """)
-        
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(12)
-        
-        # Error icon
-        icon = QLabel("⚠️")
-        icon.setStyleSheet("background: transparent; font-size: 14pt;")
-        layout.addWidget(icon)
-        
-        # Error message
-        msg = QLabel(message)
-        msg.setStyleSheet("""
-            color: rgba(255, 200, 200, 0.9);
-            font-size: 9pt;
-            background: transparent;
-        """)
-        layout.addWidget(msg, 1)
-        
-        # Dismiss button
-        dismiss = QPushButton("×")
-        dismiss.setFixedSize(24, 24)
-        dismiss.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: none;
-                color: rgba(255, 200, 200, 0.6);
-                font-size: 14pt;
-            }
-            QPushButton:hover {
-                color: white;
-            }
-        """)
-        dismiss.clicked.connect(self.hide)
-        dismiss.clicked.connect(self.deleteLater)
-        layout.addWidget(dismiss)

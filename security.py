@@ -201,54 +201,52 @@ class OutputFormatter:
 
 # Rate limiting utilities
 class RateLimiter:
-    """Simple in-memory rate limiter."""
-    
+    """Simple in-memory rate limiter.
+
+    Thread-safe: the agent harness runs loops on daemon threads that may all
+    share the same limiter instance, so every mutation of `_requests` is
+    guarded by a lock.
+    """
+
     def __init__(self, max_requests: int = 10, window_seconds: int = 60):
+        import threading
         self._max_requests = max_requests
         self._window_seconds = window_seconds
         self._requests: dict[str, list[float]] = {}
-    
+        self._lock = threading.Lock()
+
+    def _prune(self, key: str, current_time: float) -> list[float]:
+        """Drop entries outside the sliding window (caller holds the lock)."""
+        recent = [
+            t for t in self._requests.get(key, [])
+            if current_time - t < self._window_seconds
+        ]
+        self._requests[key] = recent
+        return recent
+
     def is_allowed(self, key: str) -> bool:
         """Check if a request is allowed under rate limits."""
         import time
         current_time = time.time()
-        
-        if key not in self._requests:
-            self._requests[key] = []
-        
-        # Clean old requests outside the window
-        self._requests[key] = [
-            t for t in self._requests[key]
-            if current_time - t < self._window_seconds
-        ]
-        
-        # Check if under limit
-        if len(self._requests[key]) >= self._max_requests:
-            return False
-        
-        # Record this request
-        self._requests[key].append(current_time)
-        return True
-    
+        with self._lock:
+            recent = self._prune(key, current_time)
+            if len(recent) >= self._max_requests:
+                return False
+            recent.append(current_time)
+            return True
+
     def get_remaining(self, key: str) -> int:
         """Get remaining requests in current window."""
         import time
         current_time = time.time()
-        
-        if key not in self._requests:
-            return self._max_requests
-        
-        recent = [
-            t for t in self._requests[key]
-            if current_time - t < self._window_seconds
-        ]
-        
+        with self._lock:
+            recent = self._prune(key, current_time)
         return max(0, self._max_requests - len(recent))
-    
+
     def reset(self, key: str):
         """Reset rate limit for a key."""
-        if key in self._requests:
-            del self._requests[key]
+        with self._lock:
+            self._requests.pop(key, None)
 
 
 # Global rate limiter instance
